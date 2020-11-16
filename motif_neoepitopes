@@ -1,0 +1,316 @@
+"""
+dependencies:
+•	os
+•	sys
+•	pandas
+•	numpy
+•	csv
+
+inputs:
+•	File = path to supplementary table 10*
+•	Out = output directory
+
+*Download supplementary table 10 (neoantigen prediction) from https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6119118/#SD3
+(supplementary material 2, 40M txt) - note supplementary material 5 has survival information
+
+BS = matrix of alleles that belong to B supertypes per Sidney et al 2008 doi: 10.1186/1471-2172-9-1
+
+"""
+
+import os
+import sys
+import numpy as np
+import pandas as pd
+import csv
+
+File = sys.argv[1]
+Out = sys.argv[2]
+
+BS = ([B07,B08,B27,B44,B58,B62,BNA],
+B07:02,B08:01,B14:02,B18:01,B15:16,B15:01,B07:08],
+B07:03,B08:02,B15:03,B37:01,B15:17,B15:02,B07:10],
+B07:05,B08:07,B15:09,B40:01,B57:01,B15:12,B07:11],
+B15:08,B08:09,B15:10,B40:02,B57:02,B15:13,B07:13],
+B35:01,B08:11,B15:18,B40:06,B58:01,B46:01,B07:27],
+B35:03,B08:13,B27:02,B44:02,B58:02,B52:01,B07:28],
+B42:01,B08:15,B27:03,B44:03,B15:67,B15:05,B07:29],
+B51:01,B08:18,B27:04,B45:01,B15:95,B15:14,B07:32],
+B51:02,B08:19,B27:05,B15:53,B57:03,B15:15,B08:04],
+B51:03,B08:20,B27:06,B18:03,B57:07,B15:19,B08:05],
+B53:01,B08:21,B27:07,B18:05,B57:08,B15:20,B08:06],
+B54:01,B08:22,B27:09,B18:06,B57:09,B15:25,B08:10],
+B55:01,B08:23,B38:01,B18:10,B58:04,B15:28,B08:14],
+B55:02,B08:24,B39:01,B18:11,B58:06,B15:30,B08:17],
+B56:01,B08:25,B39:02,B18:13,B58:07,B15:31,B13:01],
+B67:01,B08:03,B39:09,B18:15,B58:08,B15:33,B13:02],
+B78:01,B08:08,B48:01,B18:19,B58:09,B15:34,B13:03],
+B07:04,B08:12,B73:01,B18:20,B58:11,B15:38,B13:04],
+B07:06,B08:16,B14:01,B37:04,B57:04,B15:39,B13:06],
+B07:15,,B14:03,B40:05,B57:05,B15:40,B13:07],
+B07:19,,B14:06,B40:11,B57:06,B15:48,B13:08],
+B07:20,,B14:07,B40:14,B58:05,B15:50,B13:10],
+B07:21,,B15:37,B40:15,,B15:60,B13:11],
+B07:22,,B15:47,B40:16,,B15:63,B13:12],
+B07:24,,B15:49,B40:20,,B15:65,B14:04],
+B07:25,,B15:51,B40:26,,B15:70,B15:06],
+B07:26,,B15:52,B40:29,,B15:75,B15:11],
+B07:30,,B15:54,B40:35,,B15:78,B15:21],
+B07:31,,B15:61,B40:39,,B15:81,B15:27],
+B07:33,,B15:62,B40:40,,B15:82,B15:29],
+B07:34,,B15:69,B40:49,,B15:83,B15:32],
+B07:35,,B15:72,B40:50,,B15:85,B15:36],
+B07:39,,B15:74,B40:53,,B15:88,B15:43],
+B07:40,,B15:80,B40:54,,B15:92,B15:44],
+B07:41,,B15:90,B40:55,,B15:96,B15:56],
+B07:42,,B15:91,B40:56,,B15:97,B15:57],
+B07:43,,B15:93,B40:57,,B35:28,B15:64],
+B35:07,,B15:98,B41:02,,B40:21,B15:66],
+B35:08,,B15:99,B41:03,,B46:03,B15:71],
+B35:11,,B27:10,B44:04,,B46:04,B15:76],
+B35:14,,B27:13,B44:07,,B46:05,B15:77],
+B35:15,,B27:15,B44:13,,B52:02,B15:84],
+B35:21,,B27:17,B44:16,,B52:03,B15:87],
+B35:22,,B27:25,B44:21,,B52:04,B15:89],
+B35:24,,B27:28,B44:22,,B52:05,B18:04],
+B35:31,,B38:05,B44:24,,B52:07,B18:07],
+B35:32,,B38:09,B44:26,,B52:08,B18:08],
+B35:33,,B38:10,B44:27,,B78:05,B18:09],
+B35:35,,B38:11,B44:28,,B95:02,B18:12],
+B35:36,,B39:04,B44:29,,B95:04,B18:18],
+B35:38,,B39:07,B44:30,,B15:04,B27:08],
+B35:40,,B39:14,B44:32,,B15:07,B27:12],
+B35:41,,B39:18,B44:33,,B15:24,B27:16],
+B35:42,,B39:23,B44:35,,B15:35,B27:18],
+B35:43,,B39:26,B44:36,,B15:42,B27:23],
+B35:44,,B39:27,B44:38,,B15:45,B27:26],
+B35:45,,B39:29,B45:05,,B15:55,B27:29],
+B35:46,,B39:30,B45:07,,B15:58,B35:10],
+B35:54,,B39:32,B49:04,,B15:73,B35:13],
+B35:55,,B40:12,B50:01,,B15:86,B35:16],
+B35:57,,B48:02,B50:02,,B44:08,B35:19],
+B35:61,,B48:03,B50:04,,B46:02,B35:20],
+B39:10,,B48:04,B15:46,,,B35:23],
+B39:16,,B48:05,B18:02,,,B35:25],
+B42:04,,B48:09,B40:03,,,B35:27],
+B42:05,,B48:10,B40:04,,,B35:47],
+B51:05,,B48:11,B40:09,,,B35:48],
+B51:08,,B48:12,B40:10,,,B35:49],
+B51:09,,B48:13,B40:18,,,B35:50],
+B51:10,,B95:03,B40:19,,,B35:52],
+B51:11,,B14:05,B40:23,,,B35:56],
+B51:16,,B15:23,B40:24,,,B37:02],
+B51:17,,B15:68,B40:28,,,B37:05],
+B51:18,,B27:01,B40:30,,,B37:06],
+B51:19,,B27:11,B40:33,,,B37:07],
+B51:21,,B27:14,B40:34,,,B37:08],
+B51:23,,B27:19,B40:36,,,B37:09],
+B51:24,,B27:20,B40:38,,,B38:02],
+B51:26,,B27:21,B40:42,,,B38:03],
+B51:28,,B27:24,B40:43,,,B38:04],
+B51:29,,B27:27,B40:44,,,B38:08],
+B51:30,,B27:30,B40:45,,,B39:12],
+B51:31,,B35:26,B40:47,,,B39:19],
+B51:32,,B39:03,B40:48,,,B39:20],
+B51:33,,B39:05,B40:51,,,B39:22],
+B51:34,,B39:06,B40:52,,,B39:31],
+B51:35,,B39:08,B40:58,,,B40:07],
+B51:36,,B39:11,B40:59,,,B40:08],
+B51:38,,B39:13,B41:01,,,B40:13],
+B53:02,,B39:15,B41:04,,,B40:25],
+B53:06,,B39:24,B41:06,,,B40:27],
+B53:08,,B39:28,B41:07,,,B40:37],
+B53:10,,B39:33,B44:05,,,B40:46],
+B54:03,,B39:34,B44:14,,,B40:60],
+B54:04,,B44:40,B44:20,,,B40:61],
+B54:06,,B48:07,B44:25,,,B41:05],
+B54:07,,B48:08,B44:31,,,B42:02],
+B55:03,,,B44:34,,,B44:09],
+B55:04,,,B44:39,,,B44:10],
+B55:05,,,B44:41,,,B44:11],
+B55:07,,,B44:42,,,B44:12],
+B55:09,,,B45:02,,,B44:15],
+B55:10,,,B47:04,,,B44:17],
+B55:15,,,B47:05,,,B44:18],
+B55:17,,,,,,B45:06],
+B55:19,,,,,,B47:01],
+B56:03,,,,,,B47:02],
+B56:05,,,,,,B47:03],
+B56:13,,,,,,B48:06],
+B56:15,,,,,,B49:01],
+B56:16,,,,,,B49:02],
+B78:02,,,,,,B49:03],
+B78:04,,,,,,B51:07],
+B07:07,,,,,,B51:15],
+B07:09,,,,,,B51:22],
+B07:12,,,,,,B52:06],
+B07:14,,,,,,B53:03],
+B07:16,,,,,,B53:05],
+B07:17,,,,,,B53:07],
+B07:18,,,,,,B53:09],
+B07:23,,,,,,B54:02],
+B07:36,,,,,,B54:05],
+B07:37,,,,,,B55:12],
+B35:02,,,,,,B55:16],
+B35:04,,,,,,B56:06],
+B35:05,,,,,,B56:07],
+B35:06,,,,,,B56:08],
+B35:09,,,,,,B56:14],
+B35:12,,,,,,B59:01],
+B35:17,,,,,,B67:02],
+B35:18,,,,,,B78:03],
+B35:29,,,,,,B82:01],
+B35:30,,,,,,B82:02],
+B35:34,,,,,,B83:01],
+B35:37,,,,,,B95:01],
+B35:39,,,,,,],
+B35:51,,,,,,],
+B35:53,,,,,,],
+B35:58,,,,,,],
+B35:60,,,,,,],
+B38:06,,,,,,],
+B38:07,,,,,,],
+B39:17,,,,,,],
+B42:06,,,,,,],
+B44:06,,,,,,],
+B51:04,,,,,,],
+B51:06,,,,,,],
+B51:12,,,,,,],
+B51:13,,,,,,],
+B51:14,,,,,,],
+B51:20,,,,,,],
+B51:37,,,,,,],
+B53:04,,,,,,],
+B55:08,,,,,,],
+B55:11,,,,,,],
+B55:13,,,,,,],
+B55:14,,,,,,],
+B56:02,,,,,,],
+B56:04,,,,,,],
+B56:09,,,,,,],
+B56:10,,,,,,],
+B56:11,,,,,,],
+B56:12,,,,,,],
+B81:01,,,,,,],
+B81:02,,,,,,])
+
+B07 = BS.iloc[:,0]
+B07 = 'HLA-' + B07
+B07 = np.array(B07, dtype=str)
+
+B27 = BS.iloc[:,2]
+B27 = 'HLA-' + B27
+B27 = np.array(B27, dtype=str)
+
+B44 = BS.iloc[:,3]
+B44 = 'HLA-' + B44
+B44 = np.array(B44, dtype=str)
+
+B58 = BS.iloc[:,4]
+B58 = 'HLA-' + B58
+B58 = np.array(B58, dtype=str)
+
+B62 = BS.iloc[:,5]
+B62 = 'HLA-' + B62
+B62 = np.array(B62, dtype=str)
+
+def motif():
+    df = pd.read_table(File)
+    
+    # selects neoepitopes 9 amino acids in length with mutation in the anchor position then characterizes each part of the neoepitope
+    df = df.loc[df['pep_position'] == 7]
+    df = df.loc[df['pep_length'] == 9]
+    df['anchor'] = df.iloc[:,7].str.strip().str[-2]
+    df['prime']  = df.iloc[:,7].str.strip().str[-1]
+    df['cterm'] = df.iloc[:,7].str.strip().str[0]
+    df['CT'] = df['cterm'].str.contains('F|W|Y|L|I|M|Q|V|A')
+    df['CTB'] = df['cterm'].str.contains('F|W|Y|L|I|M|Q|V|A|H|K|R')
+    df['wild'] = df.iloc[:,3].str.strip().str[2]
+    df['mut'] = df.iloc[:,3].str.strip().str[-1]
+    
+    #sorts neoepitopes based on supertype
+    df['HLA-B07'] = df['HLA'].isin(B07)
+    df['HLA-B27'] = df['HLA'].isin(B27)
+    df['HLA-B44'] = df['HLA'].isin(B44)
+    df['HLA-B58'] = df['HLA'].isin(B58)
+    df['HLA-B62'] = df['HLA'].isin(B62)
+    
+    #two part definition ensuring radical substitution
+    df['B27A'] = df['mut'].str.contains('H|K|R')
+    df['B27B'] = df['wild'].str.contains('H|K|R')
+    df['B44A'] = df['mut'].str.contains('E')
+    df['B44B'] = df['wild'].str.contains('D')
+    df['B58A'] = df['mut'].str.contains('A|S|T')
+    df['B58B'] = df['wild'].str.contains('A|S|T')
+    df['B62A'] = df['mut'].str.contains('L|I|V|M|Q')
+    df['B62B'] = df['wild'].str.contains('L|I|V|M|Q')
+    
+    #b07 definition
+    df['B07-0'] = df['HLA-B07'] == True
+    df['B07-1'] = df['mut'].str.contains('P')
+    df['B07-2'] = df['anchor'].str.contains('P')
+    df['B07-3'] = (df['B07-0'] == True) & (df['B07-1'] == True)
+    df['B07-4'] = (df['B07-2'] == True) & (df['B07-3'] == True)
+    df['B07-5'] = (df['B07-3'] == True) & (df['B07-4'] == True)
+    df['B07'] = (df['B07-5'] == True) & (df['CT'] == True)
+    
+    #b27 definition
+    df['B27-0'] = df['HLA-B27'] ==True
+    df['B27-1'] = (df['B27A'] == True) & (df['B27B'] == False)
+    df['B27-2'] = (df['B27-0'] == True) & (df['B27-1'] == True)
+    df['B27-3'] = df['anchor'].str.contains('H|K|R')
+    df['B27-4'] = (df['B27-2'] == True) & (df['CTB'] == True)
+    df['B27'] = (df['B27-3'] == True) & (df['B27-4'] == True)
+    
+    #b44 definition
+    df['B44-0'] = df['HLA-B44'] ==True
+    df['B44-1'] = (df['B44A'] == True) & (df['B44B'] == False)
+    df['B44-2'] = (df['B44-0'] == True) & (df['B44-1'] == True)
+    df['B44-3'] = (df['B44-2'] == True) & (df['CT'] == True)
+    df['B44-4'] = df['anchor'].str.contains('D|E')
+    df['B44'] = (df['B44-3'] == True) & (df['B44-4'] == True)
+    
+    #b58 definition
+    df['B58-0'] = df['HLA-B58'] ==True
+    df['B58-1'] = (df['B58A'] == True) & (df['B58B'] == False)
+    df['B58-2'] = (df['B58-0'] == True) & (df['B58-1'] == True)
+    df['B58-3'] = (df['B58-2'] == True) & (df['CT'] == True)
+    df['B58-4'] = df['anchor'].str.contains('A|S|T')
+    df['B58'] = (df['B58-3'] == True) & (df['B58-4'] == True)
+    
+    #b62 definition
+    df['B62-0'] = df['HLA-B62'] ==True
+    df['B62-1'] = (df['B62A'] == True) & (df['B62B'] == False)
+    df['B62-2'] = (df['B62-0'] == True) & (df['B62-1'] == True)
+    df['B62-3'] = df['anchor'].str.contains('L|I|V|M|Q')
+    df['B62-4'] = (df['B62-2'] == True) & (df['CT'] == True)
+    df['B62'] = (df['B62-3'] == True) & (df['B62-4'] == True)
+    
+    #prints each motif neoepitope marking its supertype
+    MB07 = df.loc[df['B07'] == True]
+    MB07 = MB07.iloc[:,:17]
+    MB07['Supertype']  = 'B07'
+    MB07.to_csv(Out, mode='a', index=False)
+        
+    MB27 = df.loc[df['B27'] == True]
+    MB27 = MB27.iloc[:,:17]
+    MB27['Supertype']  = 'B27'
+    MB27.to_csv(Out, mode='a', header=False, index=False)
+        
+    MB44 = df.loc[df['B44'] == True]
+    MB44 = MB44.iloc[:,:17]
+    MB44['Supertype']  = 'B44'
+    MB44.to_csv(Out, mode='a', header=False, index=False)
+        
+    MB58 = df.loc[df['B58'] == True]
+    MB58 = MB58.iloc[:,:17]
+    MB58['Supertype']  = 'B58'
+    MB58.to_csv(Out, mode='a', header=False, index=False)
+        
+    MB62 = df.loc[df['B62'] == True]
+    MB62 = MB62.iloc[:,:17]
+    MB62['Supertype']  = 'B62'
+    MB62.to_csv(Out, mode='a', header=False, index=False)
+    
+    return
+
+motif()
