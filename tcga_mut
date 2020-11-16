@@ -1,0 +1,2100 @@
+"""
+dependencies:
+•	os
+•	sys
+•	pandas
+•	csv
+
+input
+•	Folder = Directory (Mutect2 output annotated by VEP)
+•	Master = sample sheet that has list of file names and decoder
+•	Out = output directory
+
+STEP ONE: Download tcga vep mutect2 files, make sure to download sample sheet, which will serve as master
+e.g., gdc_sample_sheet.luad.tsv
+
+File Name will be how to call file, Name is how to identify
+
+STEP TWO: unzip files from tcga
+def unzip 
+
+STEP THREE: change File Name into file named mutect.txt, remove #lines at beginning of file
+def preproc 
+
+STEP FOUR: run remaining programs: mut – obtains numbers of non-synonymous mutations and each type of DNA base that leads to them; 
+rad – obtains amino acid substitutions from radical amino acid substitutons only; 
+taa – obtains amino acid substitutions and gives matrix profiles for each sample and a summary
+
+DETAILS: def muts 
+
+os.chdir sets Folder as location
+df opens list of patient identifiers used for file naming from Master
+ID stores list of file names
+filenames attaches file extensions to IDs to call txts
+
+header sets header for output csv
+includes parameters: ID (patient identifier), NSC (nonsynonymous mutations), SL (stop loss), SG (stop gain), AC (adenine A > cytosine C mutations, based on coding strand notation only), fAC (fixed A>C based on annotations, takes into consideration when gene is on template as opposed to coding strand based on what amino acid substitutions are possible with which DNA bases), remaining correspond to other DNA bases G – guanine, T – thymine 
+
+with open(Out)
+sets up output csv which is later appended 
+
+for i in range(len(ID))
+sets for loop for all txts in Folder
+
+df opens each file and sets column names
+
+df[‘sA’] makes starting DNA base Boolean for each of four DNA bases (A, C, G, T)
+df[‘eA’] makes ending (mutant) DNA base Boolean 
+
+df[‘P’] makes whether mutation has passed Mutect filter Boolean 
+df1 creates dataframe from each mutect.txt that only includes mutations that passed the filter (true mutations)
+
+df1[‘AC’]  makes A>C mutation Boolean, repeated for all 12 possible mutations
+
+df2 expands annotation column, splitting it apart based on pipes 
+
+df2[‘MS’] selects only missense mutations (nonsynonymous mutations in which one DNA base change leads to an amino acid substitution)
+NSY is dataframe of total missense (total count of nonsynonymous mutations)
+
+df2[‘S_l’] selects stop lost mutations, which are saved as SL (total count)
+df2[‘S_g’] selects stop gained mutations, which are saved as SG (total count)
+
+We then return to df1 (because df2 expanded and doesn’t have DNA mutation columns)
+AC creates dataframe only including A>C mutations (repeated for each of 12 DNA mutations) 
+df3 then expands annotation column, df4 selects only missense mutations
+rAC pulls out all mutations that are labeled as A>C based on the coding strand (r is for real).
+
+Each section then includes amino acid substitutions that are only possible with the complement mutation (e.g. A base pairs to T, C base pairs to G; so when A mutates to C, its base pair, to match, mutates to G; so A>C has a complement T>G on the opposite or template strand). This step is required because all DNA mutations are reported based on the “coding” strand even if the gene is on the template strand, which leads to amino acid annotations that are impossible based on their reported DNA mutation. This hasn’t really mattered so much before because people either looked at DNA mutations or amino acid substitutions. But when you’re looking at specific amino acid substitutions and linking them to DNA mutations, it matters, which is what we’re doing.
+
+df4[‘STA’] pulls out starting (wildtype) amino acid
+df4[‘END’] pulls out ending (mutant) amino acid
+these are used in context of mutations possible for each DNA base (based on theor.xls)
+
+E.g. df4[‘Sta-C’] / df4[‘End-C’]:  the A>C DNA mutation does not have any possible substitutions that start with cysteine (C), but T>G does, C>G and C>W, so these columns make this Boolean.
+df5 then sets a dataframe to only include the Boolean values for potential complement mutations, which are then labeled as cTG (complement TG). 
+
+This is repeated for all possible mutations.
+
+At the end, fAC (‘fixed’ AC) is all coding strand AC mutations minus the mutations that belong to its template strand plus the mutations attributed to TG that were on the template strand.
+
+len takes the count of each, which are then written to the csv created at the beginning of the script for each file.
+
+DETAILS: def rad
+
+this is similar to mut, except pulls out only radical charged substitutions.
+
+DETAILS: def taa
+
+this uses a similar method to loop the annotated txt files in a folder, it creates a matrix of amino acid substitutions that can be used in the heatmap script but also has an option for listing them as a vector.
+
+df1 selects pass
+df2 expands annotations
+df3 selects missense 
+df3[‘ST’] pulls out the reference amino acid
+df3[‘END’] pulls out the amino acid substitution
+
+output is an amino acid substitution matrix as ID[i] + ‘-aa-profile.csv’ for each file
+and a summary of all as vectors as ‘tot-mut-aa.csv’
+
+"""
+
+import os
+import pandas as pd
+import sys
+import csv
+
+Folder = sys.argv[1]
+Master = sys.argv[2]
+Out = sys.argv[3]
+
+if not sys.warnoptions:
+    import warnings
+    warnings.simplefilter("ignore")
+    
+def unzip():
+    os.chdir(Folder)
+    df = pd.read_table(Master)
+    ID = df.iloc[:,0]
+    Name = df.iloc[:,1]
+    
+    for i in range(len(ID)):
+        try:
+            unz = 'gunzip ' + ID[i] + '/' + Name[i]
+            os.system(unz)
+        
+        except FileNotFoundError:
+                next
+
+    return
+
+def preproc():
+    os.chdir(Folder)
+    df = pd.read_table(Master)
+    ID = df.iloc[:,0]
+    
+    for i in range(len(ID)):
+        try:
+            pp = 'sed "'"/^##/d"'" ' + ID[i] + '/' + ID[i] + '.vep.vcf > ' + ID[i] + '/mutect.txt'
+            os.system(pp)
+        
+        except FileNotFoundError:
+                next
+    return
+
+def muts():
+    os.chdir(Folder)
+    df = pd.read_csv(Master)
+    ID = df.iloc[:,0]
+    filenames = ID + '/mutect.txt'
+    Name = df.iloc[:,1]
+    
+    header = 'ID','NSC','SL','SG','AC','fAC','AG','fAG','AT','fAT','CA','fCA','CG','fCG','CT','fCT','GA','fGA','GC','fGC','GT','fGT','TA','fTA','TC','fTC','TG','fTG'
+
+    with open(Out, 'a', newline='') as f:
+        wr = csv.writer(f, delimiter=',')
+        wr.writerow(header)
+    
+    for i in range(len(ID)):
+        try:
+            with open(filenames[i], 'r') as file:
+                df = pd.read_table(file, sep='\t', names=['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'NORMAL', 'TUMOR'])   
+                
+                #Makes DNA bases boolean, must select DNA mut first because lose after expand
+                df['sA'] = df.iloc[:,3].str.contains('A')
+                df['sC'] = df.iloc[:,3].str.contains('C')
+                df['sG'] = df.iloc[:,3].str.contains('G')
+                df['sT'] = df.iloc[:,3].str.contains('T')
+                df['eA'] = df.iloc[:,4].str.contains('A')
+                df['eC'] = df.iloc[:,4].str.contains('C')
+                df['eG'] = df.iloc[:,4].str.contains('G')
+                df['eT'] = df.iloc[:,4].str.contains('T')
+                
+                #Only selects mutations that have passed filters                                          
+                df['P'] = df.iloc[:,6].str.contains('PASS')
+                df1 = df.loc[df['P'] == True]
+                
+                #Creates dataframes for each DNA mutation
+                df1['AC'] = (df1['sA'] == True) & (df1['eC'] == True)
+                df1['AG'] = (df1['sA'] == True) & (df1['eG'] == True)
+                df1['AT'] = (df1['sA'] == True) & (df1['eT'] == True)
+                df1['CA'] = (df1['sC'] == True) & (df1['eA'] == True)
+                df1['CG'] = (df1['sC'] == True) & (df1['eG'] == True)
+                df1['CT'] = (df1['sC'] == True) & (df1['eT'] == True)
+                df1['GA'] = (df1['sG'] == True) & (df1['eA'] == True)
+                df1['GC'] = (df1['sG'] == True) & (df1['eC'] == True)
+                df1['GT'] = (df1['sG'] == True) & (df1['eT'] == True)
+                df1['TA'] = (df1['sT'] == True) & (df1['eA'] == True)
+                df1['TC'] = (df1['sT'] == True) & (df1['eC'] == True)
+                df1['TG'] = (df1['sT'] == True) & (df1['eG'] == True)
+
+                #Selects total missense mutations 
+                df2 = df1.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                df2['MS'] = df2.iloc[:,1].str.contains('missense')
+                NSY = df2.loc[df2['MS'] == True]
+                
+                #Selects total stop mutations
+                df2 = df1.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                df2['S_l'] = df2.iloc[:,1].str.contains('stop_lost')
+                df2['S_g'] = df2.iloc[:,1].str.contains('stop_gained')
+                SL = df2.loc[df2['S_l'] == True]
+                SG = df2.loc[df2['S_g'] == True]
+                
+                
+                #Creates different frames for each mutation
+                AC = (df1.loc[df1['AC'] == True])
+                AG = (df1.loc[df1['AG'] == True])
+                AT = (df1.loc[df1['AT'] == True])
+                CA = (df1.loc[df1['CA'] == True])
+                CG = (df1.loc[df1['CG'] == True])
+                CT = (df1.loc[df1['CT'] == True])
+                GA = (df1.loc[df1['GA'] == True])
+                GC = (df1.loc[df1['GC'] == True])
+                GT = (df1.loc[df1['GT'] == True])
+                TA = (df1.loc[df1['TA'] == True])
+                TC = (df1.loc[df1['TC'] == True])
+                TG = (df1.loc[df1['TG'] == True])
+                
+                 
+                #AC: starting and ending amino acids
+                if len(AC) == 0:            
+                    rAC = 0
+                    cTG = 0
+                
+                else:
+                    df3 = AC.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                    df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                    df4 = df3.loc[df3['MS'] == True]
+                    df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                    df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                    rAC = len(df4)
+                    
+                    #AC: complementary strand TG - note does not include stop_loss/stop_gain
+                    df4['Sta-C'] = df4.iloc[:,19].str.contains('C')
+                    df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                    df4['Sta-F'] = df4.iloc[:,19].str.contains('F')
+                    df4['Sta-H'] = df4.iloc[:,19].str.contains('H')
+                    df4['Sta-I'] = df4.iloc[:,19].str.contains('I')
+                    df4['Sta-L'] = df4.iloc[:,19].str.contains('L')
+                    df4['Sta-M'] = df4.iloc[:,19].str.contains('M')
+                    df4['Sta-N'] = df4.iloc[:,19].str.contains('N')
+                    df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                    df4['Sta-V'] = df4.iloc[:,19].str.contains('V')
+                    df4['Sta-W'] = df4.iloc[:,19].str.contains('W')
+                    df4['Sta-Y'] = df4.iloc[:,19].str.contains('Y')
+        
+                    df4['End-C'] = df4.iloc[:,20].str.contains('G|W')
+                    df4['End-D'] = df4.iloc[:,20].str.contains('E')
+                    df4['End-F'] = df4.iloc[:,20].str.contains('C|L|V')
+                    df4['End-H'] = df4.iloc[:,20].str.contains('Q')
+                    df4['End-I'] = df4.iloc[:,20].str.contains('M|R|S')
+                    df4['End-L'] = df4.iloc[:,20].str.contains('R|V|W')
+                    df4['End-M'] = df4.iloc[:,20].str.contains('R')
+                    df4['End-N'] = df4.iloc[:,20].str.contains('K')
+                    df4['End-S'] = df4.iloc[:,20].str.contains('A|R')
+                    df4['End-V'] = df4.iloc[:,20].str.contains('G')
+                    df4['End-W'] = df4.iloc[:,20].str.contains('G')
+                    df4['End-Y'] = df4.iloc[:,20].str.contains('D')
+                    
+                    df4['cC'] = (df4['Sta-C'] == True) & (df4['End-C'] == True)
+                    df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                    df4['cF'] = (df4['Sta-F'] == True) & (df4['End-F'] == True)
+                    df4['cH'] = (df4['Sta-H'] == True) & (df4['End-H'] == True)
+                    df4['cI'] = (df4['Sta-I'] == True) & (df4['End-I'] == True)
+                    df4['cL'] = (df4['Sta-L'] == True) & (df4['End-L'] == True)
+                    df4['cM'] = (df4['Sta-M'] == True) & (df4['End-M'] == True)
+                    df4['cN'] = (df4['Sta-N'] == True) & (df4['End-N'] == True)
+                    df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                    df4['cV'] = (df4['Sta-V'] == True) & (df4['End-V'] == True)
+                    df4['cW'] = (df4['Sta-W'] == True) & (df4['End-W'] == True)
+                    df4['cY'] = (df4['Sta-Y'] == True) & (df4['End-Y'] == True)
+                    df5 = df4.iloc[:,43:]
+                    df5['cTG'] = df5.any(axis='columns')
+                    cTG = df5.loc[df5['cTG'] == True]
+                    cTG = len(cTG)
+        
+                       
+                #AG: starting and ending amino acids
+                if len(AG) == 0:            
+                    rAG = 0
+                    cTC = 0
+                
+                else:
+                    df3 = AG.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                    df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                    df4 = df3.loc[df3['MS'] == True]
+                    df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                    df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                    rAG = len(df4)
+                    
+                    df4['Sta-C'] = df4.iloc[:,19].str.contains('C')
+                    df4['Sta-F'] = df4.iloc[:,19].str.contains('F')
+                    df4['Sta-I'] = df4.iloc[:,19].str.contains('I')
+                    df4['Sta-L'] = df4.iloc[:,19].str.contains('L')
+                    df4['Sta-M'] = df4.iloc[:,19].str.contains('M')
+                    df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                    df4['Sta-V'] = df4.iloc[:,19].str.contains('V')
+                    df4['Sta-W'] = df4.iloc[:,19].str.contains('W')
+                    df4['Sta-Y'] = df4.iloc[:,19].str.contains('Y')
+                    
+                    df4['End-C'] = df4.iloc[:,20].str.contains('R')
+                    df4['End-F'] = df4.iloc[:,20].str.contains('L|S')
+                    df4['End-I'] = df4.iloc[:,20].str.contains('T')
+                    df4['End-L'] = df4.iloc[:,20].str.contains('P|S')
+                    df4['End-M'] = df4.iloc[:,20].str.contains('T')
+                    df4['End-S'] = df4.iloc[:,20].str.contains('P')
+                    df4['End-V'] = df4.iloc[:,20].str.contains('A')
+                    df4['End-W'] = df4.iloc[:,20].str.contains('R')
+                    df4['End-Y'] = df4.iloc[:,20].str.contains('H')
+                    
+                    df4['cC'] = (df4['Sta-C'] == True) & (df4['End-C'] == True)
+                    df4['cF'] = (df4['Sta-F'] == True) & (df4['End-F'] == True)
+                    df4['cI'] = (df4['Sta-I'] == True) & (df4['End-I'] == True)
+                    df4['cL'] = (df4['Sta-L'] == True) & (df4['End-L'] == True)
+                    df4['cM'] = (df4['Sta-M'] == True) & (df4['End-M'] == True)
+                    df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                    df4['cV'] = (df4['Sta-V'] == True) & (df4['End-V'] == True)
+                    df4['cW'] = (df4['Sta-W'] == True) & (df4['End-W'] == True)
+                    df4['cY'] = (df4['Sta-Y'] == True) & (df4['End-Y'] == True)
+                    
+                    df5 = df4.iloc[:,43:]
+                    df5['cTG'] = df5.any(axis='columns')
+                    cTC = df5.loc[df5['cTG'] == True]
+                    cTC = len(cTC)
+            
+            
+                    #AT: starting and ending amino acids
+                    if len(AT) == 0:            
+                        rAT = 0
+                        cTA = 0
+                    
+                    else:
+                        df3 = AT.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rAT = len(df4)
+                        
+                        df4['Sta-C'] = df4.iloc[:,19].str.contains('C')
+                        df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                        df4['Sta-F'] = df4.iloc[:,19].str.contains('F')
+                        df4['Sta-H'] = df4.iloc[:,19].str.contains('H')
+                        df4['Sta-I'] = df4.iloc[:,19].str.contains('I')
+                        df4['Sta-L'] = df4.iloc[:,19].str.contains('L')
+                        df4['Sta-M'] = df4.iloc[:,19].str.contains('M')
+                        df4['Sta-N'] = df4.iloc[:,19].str.contains('N')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-V'] = df4.iloc[:,19].str.contains('V')
+                        df4['Sta-W'] = df4.iloc[:,19].str.contains('W')
+                        df4['Sta-Y'] = df4.iloc[:,19].str.contains('Y')
+            
+                        df4['End-C'] = df4.iloc[:,20].str.contains('S')
+                        df4['End-D'] = df4.iloc[:,20].str.contains('E')
+                        df4['End-F'] = df4.iloc[:,20].str.contains('I|L|Y')
+                        df4['End-H'] = df4.iloc[:,20].str.contains('Q')
+                        df4['End-I'] = df4.iloc[:,20].str.contains('N|K')
+                        df4['End-L'] = df4.iloc[:,20].str.contains('H|M|Q')
+                        df4['End-M'] = df4.iloc[:,20].str.contains('K')
+                        df4['End-N'] = df4.iloc[:,20].str.contains('K')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('R|T')
+                        df4['End-V'] = df4.iloc[:,20].str.contains('D|E')
+                        df4['End-W'] = df4.iloc[:,20].str.contains('R')
+                        df4['End-Y'] = df4.iloc[:,20].str.contains('N')
+                        
+                        df4['cC'] = (df4['Sta-C'] == True) & (df4['End-C'] == True)
+                        df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                        df4['cF'] = (df4['Sta-F'] == True) & (df4['End-F'] == True)
+                        df4['cH'] = (df4['Sta-H'] == True) & (df4['End-H'] == True)
+                        df4['cI'] = (df4['Sta-I'] == True) & (df4['End-I'] == True)
+                        df4['cL'] = (df4['Sta-L'] == True) & (df4['End-L'] == True)
+                        df4['cM'] = (df4['Sta-M'] == True) & (df4['End-M'] == True)
+                        df4['cN'] = (df4['Sta-N'] == True) & (df4['End-N'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cV'] = (df4['Sta-V'] == True) & (df4['End-V'] == True)
+                        df4['cW'] = (df4['Sta-W'] == True) & (df4['End-W'] == True)
+                        df4['cY'] = (df4['Sta-Y'] == True) & (df4['End-Y'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cTA = df5.loc[df5['cTC'] == True]
+                        cTA = len(cTA)
+                        
+                        
+                    #CA: starting and ending amino acids
+                    if len(CA) == 0:            
+                        rCA = 0
+                        cGT = 0
+                    
+                    else:
+                        df3 = CA.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rCA = len(df4)
+                        
+                        df4['Sta-A'] = df4.iloc[:,19].str.contains('A')
+                        df4['Sta-C'] = df4.iloc[:,19].str.contains('C')
+                        df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                        df4['Sta-E'] = df4.iloc[:,19].str.contains('E')
+                        df4['Sta-G'] = df4.iloc[:,19].str.contains('G')
+                        df4['Sta-K'] = df4.iloc[:,19].str.contains('K')
+                        df4['Sta-L'] = df4.iloc[:,19].str.contains('L')
+                        df4['Sta-M'] = df4.iloc[:,19].str.contains('M')
+                        df4['Sta-Q'] = df4.iloc[:,19].str.contains('Q')
+                        df4['Sta-R'] = df4.iloc[:,19].str.contains('R')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-V'] = df4.iloc[:,19].str.contains('V')
+                        df4['Sta-W'] = df4.iloc[:,19].str.contains('W')
+                        
+                        df4['End-A'] = df4.iloc[:,20].str.contains('S')
+                        df4['End-C'] = df4.iloc[:,20].str.contains('F')
+                        df4['End-D'] = df4.iloc[:,20].str.contains('Y')
+                        df4['End-E'] = df4.iloc[:,20].str.contains('D')
+                        df4['End-G'] = df4.iloc[:,20].str.contains('C|W|V')
+                        df4['End-K'] = df4.iloc[:,20].str.contains('N')
+                        df4['End-L'] = df4.iloc[:,20].str.contains('F')
+                        df4['End-M'] = df4.iloc[:,20].str.contains('I')
+                        df4['End-Q'] = df4.iloc[:,20].str.contains('H')
+                        df4['End-R'] = df4.iloc[:,20].str.contains('I|L|M|S')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('I')
+                        df4['End-V'] = df4.iloc[:,20].str.contains('F|L')
+                        df4['End-W'] = df4.iloc[:,20].str.contains('C|L')
+                        
+                        df4['cA'] = (df4['Sta-A'] == True) & (df4['End-A'] == True)
+                        df4['cC'] = (df4['Sta-C'] == True) & (df4['End-C'] == True)
+                        df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                        df4['cE'] = (df4['Sta-E'] == True) & (df4['End-E'] == True)
+                        df4['cG'] = (df4['Sta-G'] == True) & (df4['End-G'] == True)
+                        df4['cK'] = (df4['Sta-K'] == True) & (df4['End-K'] == True)
+                        df4['cL'] = (df4['Sta-L'] == True) & (df4['End-L'] == True)
+                        df4['cM'] = (df4['Sta-M'] == True) & (df4['End-M'] == True)
+                        df4['cQ'] = (df4['Sta-Q'] == True) & (df4['End-Q'] == True)
+                        df4['cR'] = (df4['Sta-R'] == True) & (df4['End-R'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cV'] = (df4['Sta-V'] == True) & (df4['End-V'] == True)
+                        df4['cW'] = (df4['Sta-W'] == True) & (df4['End-W'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cGT = df5.loc[df5['cTC'] == True]
+                        cGT = len(cGT)
+                        
+                        
+                    #CG: starting and ending amino acids
+                    if len(CG) == 0:            
+                        rCG = 0
+                        cGC = 0
+                    
+                    else:
+                        df3 = CG.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rCG = len(df4)
+                        
+                        df4['Sta-A'] = df4.iloc[:,19].str.contains('A')
+                        df4['Sta-C'] = df4.iloc[:,19].str.contains('C')
+                        df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                        df4['Sta-E'] = df4.iloc[:,19].str.contains('E')
+                        df4['Sta-G'] = df4.iloc[:,19].str.contains('G')
+                        df4['Sta-K'] = df4.iloc[:,19].str.contains('K')
+                        df4['Sta-L'] = df4.iloc[:,19].str.contains('L')
+                        df4['Sta-M'] = df4.iloc[:,19].str.contains('M')
+                        df4['Sta-Q'] = df4.iloc[:,19].str.contains('Q')
+                        df4['Sta-R'] = df4.iloc[:,19].str.contains('R')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-V'] = df4.iloc[:,19].str.contains('V')
+                        df4['Sta-W'] = df4.iloc[:,19].str.contains('W')
+                        
+                        df4['End-A'] = df4.iloc[:,20].str.contains('P')
+                        df4['End-C'] = df4.iloc[:,20].str.contains('S')
+                        df4['End-D'] = df4.iloc[:,20].str.contains('Y')
+                        df4['End-E'] = df4.iloc[:,20].str.contains('D')
+                        df4['End-G'] = df4.iloc[:,20].str.contains('A|R')
+                        df4['End-K'] = df4.iloc[:,20].str.contains('N')
+                        df4['End-L'] = df4.iloc[:,20].str.contains('F')
+                        df4['End-M'] = df4.iloc[:,20].str.contains('I')
+                        df4['End-Q'] = df4.iloc[:,20].str.contains('H')
+                        df4['End-R'] = df4.iloc[:,20].str.contains('P|S|T')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('T')
+                        df4['End-V'] = df4.iloc[:,20].str.contains('L')
+                        df4['End-W'] = df4.iloc[:,20].str.contains('C|S')
+                        
+                        df4['cA'] = (df4['Sta-A'] == True) & (df4['End-A'] == True)
+                        df4['cC'] = (df4['Sta-C'] == True) & (df4['End-C'] == True)
+                        df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                        df4['cE'] = (df4['Sta-E'] == True) & (df4['End-E'] == True)
+                        df4['cG'] = (df4['Sta-G'] == True) & (df4['End-G'] == True)
+                        df4['cK'] = (df4['Sta-K'] == True) & (df4['End-K'] == True)
+                        df4['cL'] = (df4['Sta-L'] == True) & (df4['End-L'] == True)
+                        df4['cM'] = (df4['Sta-M'] == True) & (df4['End-M'] == True)
+                        df4['cQ'] = (df4['Sta-Q'] == True) & (df4['End-Q'] == True)
+                        df4['cR'] = (df4['Sta-R'] == True) & (df4['End-R'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cV'] = (df4['Sta-V'] == True) & (df4['End-V'] == True)
+                        df4['cW'] = (df4['Sta-W'] == True) & (df4['End-W'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cGC = df5.loc[df5['cTC'] == True]
+                        cGC = len(cGC)
+                        
+                        
+                    #CT: starting and ending amino acids
+                    if len(CT) == 0:            
+                        rCT = 0
+                        cGA = 0
+                    
+                    else:
+                        df3 = CT.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rCT = len(df4)
+                        
+                        df4['Sta-A'] = df4.iloc[:,19].str.contains('A')
+                        df4['Sta-C'] = df4.iloc[:,19].str.contains('C')
+                        df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                        df4['Sta-E'] = df4.iloc[:,19].str.contains('E')
+                        df4['Sta-G'] = df4.iloc[:,19].str.contains('G')
+                        df4['Sta-M'] = df4.iloc[:,19].str.contains('M')
+                        df4['Sta-R'] = df4.iloc[:,19].str.contains('R')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-V'] = df4.iloc[:,19].str.contains('V')
+                        
+                        df4['End-A'] = df4.iloc[:,20].str.contains('T')
+                        df4['End-C'] = df4.iloc[:,20].str.contains('Y')
+                        df4['End-D'] = df4.iloc[:,20].str.contains('N')
+                        df4['End-E'] = df4.iloc[:,20].str.contains('K')
+                        df4['End-G'] = df4.iloc[:,20].str.contains('D|E|R|S')
+                        df4['End-M'] = df4.iloc[:,20].str.contains('I')
+                        df4['End-R'] = df4.iloc[:,20].str.contains('H|K|Q')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('N')
+                        df4['End-V'] = df4.iloc[:,20].str.contains('I|M')
+                        
+                        df4['cA'] = (df4['Sta-A'] == True) & (df4['End-A'] == True)
+                        df4['cC'] = (df4['Sta-C'] == True) & (df4['End-C'] == True)
+                        df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                        df4['cE'] = (df4['Sta-E'] == True) & (df4['End-E'] == True)
+                        df4['cG'] = (df4['Sta-G'] == True) & (df4['End-G'] == True)
+                        df4['cM'] = (df4['Sta-M'] == True) & (df4['End-M'] == True)
+                        df4['cR'] = (df4['Sta-R'] == True) & (df4['End-R'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cV'] = (df4['Sta-V'] == True) & (df4['End-V'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cGA = df5.loc[df5['cTC'] == True]
+                        cGA = len(cGA)
+                        
+                        
+                    #GA: starting and ending amino acids
+                    if len(GA) == 0:            
+                        rGA = 0
+                        cCT = 0
+                    
+                    else:
+                        df3 = GA.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rGA = len(df4)
+                        
+                        df4['Sta-A'] = df4.iloc[:,19].str.contains('A')
+                        df4['Sta-H'] = df4.iloc[:,19].str.contains('H')
+                        df4['Sta-L'] = df4.iloc[:,19].str.contains('L')
+                        df4['Sta-P'] = df4.iloc[:,19].str.contains('P')
+                        df4['Sta-R'] = df4.iloc[:,19].str.contains('R')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-T'] = df4.iloc[:,19].str.contains('T')
+                        
+                        df4['End-A'] = df4.iloc[:,20].str.contains('V')
+                        df4['End-H'] = df4.iloc[:,20].str.contains('Y')
+                        df4['End-L'] = df4.iloc[:,20].str.contains('F')
+                        df4['End-P'] = df4.iloc[:,20].str.contains('L|S')
+                        df4['End-R'] = df4.iloc[:,20].str.contains('C|W')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('F|L')
+                        df4['End-T'] = df4.iloc[:,20].str.contains('I|M')
+                        
+                        df4['cA'] = (df4['Sta-A'] == True) & (df4['End-A'] == True)
+                        df4['cH'] = (df4['Sta-H'] == True) & (df4['End-H'] == True)
+                        df4['cL'] = (df4['Sta-L'] == True) & (df4['End-L'] == True)
+                        df4['cP'] = (df4['Sta-P'] == True) & (df4['End-P'] == True)
+                        df4['cR'] = (df4['Sta-R'] == True) & (df4['End-R'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cT'] = (df4['Sta-T'] == True) & (df4['End-T'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cCT = df5.loc[df5['cTC'] == True]
+                        cCT = len(cCT)
+                        
+                        
+                    #GC: starting and ending amino acids
+                    if len(GC) == 0:            
+                        rGC = 0
+                        cCG = 0
+                    
+                    else:
+                        df3 = GC.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rGC = len(df4)
+                        
+                        df4['Sta-A'] = df4.iloc[:,19].str.contains('A')
+                        df4['Sta-C'] = df4.iloc[:,19].str.contains('C')
+                        df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                        df4['Sta-F'] = df4.iloc[:,19].str.contains('F')
+                        df4['Sta-H'] = df4.iloc[:,19].str.contains('H')
+                        df4['Sta-I'] = df4.iloc[:,19].str.contains('I')
+                        df4['Sta-L'] = df4.iloc[:,19].str.contains('L')
+                        df4['Sta-N'] = df4.iloc[:,19].str.contains('N')
+                        df4['Sta-P'] = df4.iloc[:,19].str.contains('P')
+                        df4['Sta-Q'] = df4.iloc[:,19].str.contains('Q')
+                        df4['Sta-R'] = df4.iloc[:,19].str.contains('R')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-T'] = df4.iloc[:,19].str.contains('T')
+                        
+                        df4['End-A'] = df4.iloc[:,20].str.contains('G')
+                        df4['End-C'] = df4.iloc[:,20].str.contains('W')
+                        df4['End-D'] = df4.iloc[:,20].str.contains('E')
+                        df4['End-F'] = df4.iloc[:,20].str.contains('L')
+                        df4['End-H'] = df4.iloc[:,20].str.contains('D|Q')
+                        df4['End-I'] = df4.iloc[:,20].str.contains('M')
+                        df4['End-L'] = df4.iloc[:,20].str.contains('V')
+                        df4['End-N'] = df4.iloc[:,20].str.contains('K')
+                        df4['End-P'] = df4.iloc[:,20].str.contains('A|R')
+                        df4['End-Q'] = df4.iloc[:,20].str.contains('E')
+                        df4['End-R'] = df4.iloc[:,20].str.contains('G')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('C|R|W')
+                        df4['End-T'] = df4.iloc[:,20].str.contains('R|S')
+                        
+                        df4['cA'] = (df4['Sta-A'] == True) & (df4['End-A'] == True)
+                        df4['cC'] = (df4['Sta-C'] == True) & (df4['End-C'] == True)
+                        df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                        df4['cF'] = (df4['Sta-F'] == True) & (df4['End-F'] == True)
+                        df4['cH'] = (df4['Sta-H'] == True) & (df4['End-H'] == True)
+                        df4['cI'] = (df4['Sta-I'] == True) & (df4['End-I'] == True)
+                        df4['cL'] = (df4['Sta-L'] == True) & (df4['End-L'] == True)
+                        df4['cN'] = (df4['Sta-N'] == True) & (df4['End-N'] == True)
+                        df4['cP'] = (df4['Sta-P'] == True) & (df4['End-P'] == True)
+                        df4['cQ'] = (df4['Sta-Q'] == True) & (df4['End-Q'] == True)
+                        df4['cR'] = (df4['Sta-R'] == True) & (df4['End-R'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cT'] = (df4['Sta-T'] == True) & (df4['End-T'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cCG = df5.loc[df5['cTC'] == True]
+                        cCG = len(cCG)
+                        
+                        
+                    #GT: starting and ending amino acids
+                    if len(GT) == 0:            
+                        rGT = 0
+                        cCA = 0
+                    
+                    else:
+                        df3 = GT.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rGT = len(df4)
+                        
+                        df4['Sta-A'] = df4.iloc[:,19].str.contains('A')
+                        df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                        df4['Sta-F'] = df4.iloc[:,19].str.contains('F')
+                        df4['Sta-H'] = df4.iloc[:,19].str.contains('H')
+                        df4['Sta-L'] = df4.iloc[:,19].str.contains('L')
+                        df4['Sta-N'] = df4.iloc[:,19].str.contains('N')
+                        df4['Sta-P'] = df4.iloc[:,19].str.contains('P')
+                        df4['Sta-Q'] = df4.iloc[:,19].str.contains('Q')
+                        df4['Sta-R'] = df4.iloc[:,19].str.contains('R')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-T'] = df4.iloc[:,19].str.contains('T')
+                        
+                        df4['End-A'] = df4.iloc[:,20].str.contains('D|E')
+                        df4['End-D'] = df4.iloc[:,20].str.contains('E')
+                        df4['End-F'] = df4.iloc[:,20].str.contains('L')
+                        df4['End-H'] = df4.iloc[:,20].str.contains('N|Q')
+                        df4['End-L'] = df4.iloc[:,20].str.contains('I|M')
+                        df4['End-N'] = df4.iloc[:,20].str.contains('K')
+                        df4['End-P'] = df4.iloc[:,20].str.contains('H|T')
+                        df4['End-Q'] = df4.iloc[:,20].str.contains('K')
+                        df4['End-R'] = df4.iloc[:,20].str.contains('S')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('R|Y')
+                        df4['End-T'] = df4.iloc[:,20].str.contains('K|N')
+                        
+                        df4['cA'] = (df4['Sta-A'] == True) & (df4['End-A'] == True)
+                        df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                        df4['cF'] = (df4['Sta-F'] == True) & (df4['End-F'] == True)
+                        df4['cH'] = (df4['Sta-H'] == True) & (df4['End-H'] == True)
+                        df4['cL'] = (df4['Sta-L'] == True) & (df4['End-L'] == True)
+                        df4['cN'] = (df4['Sta-N'] == True) & (df4['End-N'] == True)
+                        df4['cP'] = (df4['Sta-P'] == True) & (df4['End-P'] == True)
+                        df4['cQ'] = (df4['Sta-Q'] == True) & (df4['End-Q'] == True)
+                        df4['cR'] = (df4['Sta-R'] == True) & (df4['End-R'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cT'] = (df4['Sta-T'] == True) & (df4['End-T'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cCA = df5.loc[df5['cTC'] == True]
+                        cCA = len(cCA)
+                        
+                        
+                    #TA: starting and ending amino acids
+                    if len(TA) == 0:            
+                        rTA = 0
+                        cAT = 0
+                    
+                    else:
+                        df3 = TA.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rTA = len(df4)
+                        
+                        df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                        df4['Sta-E'] = df4.iloc[:,19].str.contains('E')
+                        df4['Sta-H'] = df4.iloc[:,19].str.contains('H')
+                        df4['Sta-I'] = df4.iloc[:,19].str.contains('I')
+                        df4['Sta-K'] = df4.iloc[:,19].str.contains('K')
+                        df4['Sta-L'] = df4.iloc[:,19].str.contains('L')
+                        df4['Sta-M'] = df4.iloc[:,19].str.contains('M')
+                        df4['Sta-N'] = df4.iloc[:,19].str.contains('N')
+                        df4['Sta-Q'] = df4.iloc[:,19].str.contains('Q')
+                        df4['Sta-R'] = df4.iloc[:,19].str.contains('R')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-T'] = df4.iloc[:,19].str.contains('T')
+                        df4['Sta-Y'] = df4.iloc[:,19].str.contains('Y')
+                        
+                        df4['End-D'] = df4.iloc[:,20].str.contains('V')
+                        df4['End-E'] = df4.iloc[:,20].str.contains('D|V')
+                        df4['End-H'] = df4.iloc[:,20].str.contains('L')
+                        df4['End-I'] = df4.iloc[:,20].str.contains('F|L')
+                        df4['End-K'] = df4.iloc[:,20].str.contains('I|M|N')
+                        df4['End-L'] = df4.iloc[:,20].str.contains('F')
+                        df4['End-M'] = df4.iloc[:,20].str.contains('L')
+                        df4['End-N'] = df4.iloc[:,20].str.contains('I|Y')
+                        df4['End-Q'] = df4.iloc[:,20].str.contains('H|L')
+                        df4['End-R'] = df4.iloc[:,20].str.contains('S')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('C')
+                        df4['End-T'] = df4.iloc[:,20].str.contains('S')
+                        df4['End-Y'] = df4.iloc[:,20].str.contains('F')
+                        
+                        df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                        df4['cE'] = (df4['Sta-E'] == True) & (df4['End-E'] == True)
+                        df4['cH'] = (df4['Sta-H'] == True) & (df4['End-H'] == True)
+                        df4['cI'] = (df4['Sta-I'] == True) & (df4['End-I'] == True)
+                        df4['cK'] = (df4['Sta-K'] == True) & (df4['End-K'] == True)
+                        df4['cL'] = (df4['Sta-L'] == True) & (df4['End-L'] == True)
+                        df4['cM'] = (df4['Sta-M'] == True) & (df4['End-M'] == True)
+                        df4['cN'] = (df4['Sta-N'] == True) & (df4['End-N'] == True)
+                        df4['cQ'] = (df4['Sta-Q'] == True) & (df4['End-Q'] == True)
+                        df4['cR'] = (df4['Sta-R'] == True) & (df4['End-R'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cT'] = (df4['Sta-T'] == True) & (df4['End-T'] == True)
+                        df4['cY'] = (df4['Sta-Y'] == True) & (df4['End-Y'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cAT = df5.loc[df5['cTC'] == True]
+                        cAT = len(cAT)
+                        
+                        
+                    #TC: starting and ending amino acids
+                    if len(TC) == 0:            
+                        rTC = 0
+                        cAG = 0
+                    
+                    else:
+                        df3 = TC.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rTC = len(df4)
+            
+                        df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                        df4['Sta-E'] = df4.iloc[:,19].str.contains('E')
+                        df4['Sta-H'] = df4.iloc[:,19].str.contains('H')
+                        df4['Sta-I'] = df4.iloc[:,19].str.contains('I')
+                        df4['Sta-K'] = df4.iloc[:,19].str.contains('K')               
+                        df4['Sta-M'] = df4.iloc[:,19].str.contains('M')
+                        df4['Sta-N'] = df4.iloc[:,19].str.contains('N')
+                        df4['Sta-Q'] = df4.iloc[:,19].str.contains('Q')
+                        df4['Sta-R'] = df4.iloc[:,19].str.contains('R')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-T'] = df4.iloc[:,19].str.contains('T')
+                        df4['Sta-Y'] = df4.iloc[:,19].str.contains('Y')
+                        
+                        df4['End-D'] = df4.iloc[:,20].str.contains('G')
+                        df4['End-E'] = df4.iloc[:,20].str.contains('G')
+                        df4['End-H'] = df4.iloc[:,20].str.contains('R')
+                        df4['End-I'] = df4.iloc[:,20].str.contains('M|V')
+                        df4['End-K'] = df4.iloc[:,20].str.contains('E|R')
+                        df4['End-M'] = df4.iloc[:,20].str.contains('V')
+                        df4['End-N'] = df4.iloc[:,20].str.contains('D|S')
+                        df4['End-Q'] = df4.iloc[:,20].str.contains('R')
+                        df4['End-R'] = df4.iloc[:,20].str.contains('G')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('G')
+                        df4['End-T'] = df4.iloc[:,20].str.contains('A')
+                        df4['End-Y'] = df4.iloc[:,20].str.contains('C')
+                        
+                        df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                        df4['cE'] = (df4['Sta-E'] == True) & (df4['End-E'] == True)
+                        df4['cH'] = (df4['Sta-H'] == True) & (df4['End-H'] == True)
+                        df4['cI'] = (df4['Sta-I'] == True) & (df4['End-I'] == True)
+                        df4['cK'] = (df4['Sta-K'] == True) & (df4['End-K'] == True)
+                        df4['cM'] = (df4['Sta-M'] == True) & (df4['End-M'] == True)
+                        df4['cN'] = (df4['Sta-N'] == True) & (df4['End-N'] == True)
+                        df4['cQ'] = (df4['Sta-Q'] == True) & (df4['End-Q'] == True)
+                        df4['cR'] = (df4['Sta-R'] == True) & (df4['End-R'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cT'] = (df4['Sta-T'] == True) & (df4['End-T'] == True)
+                        df4['cY'] = (df4['Sta-Y'] == True) & (df4['End-Y'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cAG = df5.loc[df5['cTC'] == True]
+                        cAG = len(cAG)
+                        
+                        
+                    #TG: starting and ending amino acids
+                    if len(TG) == 0:            
+                        rTG = 0
+                        cAC = 0
+                    
+                    else:
+                        df3 = TG.iloc[:,7].str.split(pat='|', n=17, expand=True)
+                        df3['MS'] = df3.iloc[:,1].str.contains('missense')
+                        df4 = df3.loc[df3['MS'] == True]
+                        df4['STA'] = df4.iloc[:,15].str.strip().str[0]
+                        df4['END'] = df4.iloc[:,15].str.strip().str[-1]
+                        rTG = len(df4)
+             
+                        df4['Sta-D'] = df4.iloc[:,19].str.contains('D')
+                        df4['Sta-E'] = df4.iloc[:,19].str.contains('E')
+                        df4['Sta-H'] = df4.iloc[:,19].str.contains('H')
+                        df4['Sta-I'] = df4.iloc[:,19].str.contains('I')
+                        df4['Sta-K'] = df4.iloc[:,19].str.contains('K')               
+                        df4['Sta-M'] = df4.iloc[:,19].str.contains('M')
+                        df4['Sta-N'] = df4.iloc[:,19].str.contains('N')
+                        df4['Sta-Q'] = df4.iloc[:,19].str.contains('Q')
+                        df4['Sta-R'] = df4.iloc[:,19].str.contains('R')
+                        df4['Sta-S'] = df4.iloc[:,19].str.contains('S')
+                        df4['Sta-T'] = df4.iloc[:,19].str.contains('T')
+                        df4['Sta-Y'] = df4.iloc[:,19].str.contains('Y')
+                        
+                        df4['End-D'] = df4.iloc[:,20].str.contains('A')
+                        df4['End-E'] = df4.iloc[:,20].str.contains('A')
+                        df4['End-H'] = df4.iloc[:,20].str.contains('P')
+                        df4['End-I'] = df4.iloc[:,20].str.contains('L')
+                        df4['End-K'] = df4.iloc[:,20].str.contains('H|Q|T')
+                        df4['End-M'] = df4.iloc[:,20].str.contains('L')
+                        df4['End-N'] = df4.iloc[:,20].str.contains('H|T')
+                        df4['End-Q'] = df4.iloc[:,20].str.contains('H|P')
+                        df4['End-R'] = df4.iloc[:,20].str.contains('S')
+                        df4['End-S'] = df4.iloc[:,20].str.contains('R')
+                        df4['End-T'] = df4.iloc[:,20].str.contains('P')
+                        df4['End-Y'] = df4.iloc[:,20].str.contains('S')
+                        
+                        df4['cD'] = (df4['Sta-D'] == True) & (df4['End-D'] == True)
+                        df4['cE'] = (df4['Sta-E'] == True) & (df4['End-E'] == True)
+                        df4['cH'] = (df4['Sta-H'] == True) & (df4['End-H'] == True)
+                        df4['cI'] = (df4['Sta-I'] == True) & (df4['End-I'] == True)
+                        df4['cK'] = (df4['Sta-K'] == True) & (df4['End-K'] == True)
+                        df4['cM'] = (df4['Sta-M'] == True) & (df4['End-M'] == True)
+                        df4['cN'] = (df4['Sta-N'] == True) & (df4['End-N'] == True)
+                        df4['cQ'] = (df4['Sta-Q'] == True) & (df4['End-Q'] == True)
+                        df4['cR'] = (df4['Sta-R'] == True) & (df4['End-R'] == True)
+                        df4['cS'] = (df4['Sta-S'] == True) & (df4['End-S'] == True)
+                        df4['cT'] = (df4['Sta-T'] == True) & (df4['End-T'] == True)
+                        df4['cY'] = (df4['Sta-Y'] == True) & (df4['End-Y'] == True)
+                        
+                        df5 = df4.iloc[:,43:]
+                        df5['cTC'] = df5.any(axis='columns')
+                        cAC = df5.loc[df5['cTC'] == True]
+                        cAC = len(cAC)
+                            
+                            
+                        #Calculates lengths
+                        TOT = len(NSY)
+                        rSL = len(SL)
+                        rSG = len(SG)
+                        fAC = rAC - cTG + cAC
+                        fAG = rAG - cTC + cAG
+                        fAT = rAT - cTA + cAT
+                        fCA = rCA - cGT + cCA
+                        fCG = rCG - cGC + cCG
+                        fCT = rCT - cGA + cCT
+                        fGA = rGA - cCT + cGA
+                        fGC = rGC - cCG + cGC
+                        fGT = rGT - cCA + cGT
+                        fTA = rTA - cAT + cTA
+                        fTC = rTC - cAG + cTC
+                        fTG = rTG - cAC + cTG
+                        
+                        output = Name[i],TOT,rSL,rSG,rAC,fAC,rAG,fAG,rAT,fAT,rCA,fCA,rCG,fCG,rCT,fCT,rGA,fGA,rGC,fGC,rGT,fGT,rTA,fTA,rTC,fTC,rTG,fTG  
+                        
+                        with open(Out, 'a', newline='') as f:
+                            wr = csv.writer(f, delimiter=',')
+                            lines = output
+                            wr.writerow(lines)
+
+
+        except IndexError:
+                print(Name[i])
+                next
+                
+        except AttributeError:
+                print(Name[i])
+                next
+                
+    return
+
+
+def rad():
+    
+    os.chdir(Folder)
+    df = pd.read_csv(Master)
+    ID = df.iloc[:,0]
+    filenames = ID + '/mutect-nsc.csv'
+    Outpath = Out + '/Falcon-rad-aa.csv'
+    
+    header = 'ID','TOT-RAD','POS','POSTI','POSTV','NEG','NEGTI','NEGTV','D','DTI','DTV','E','ETI','ETV','H','HTI', 'HTV','K','KTI','KTV','R','RTI','RTV','rAC','rAG','rAT','rCA','rCG','rGA', 'rGC', 'rGT', 'rTA', 'rTC', 'rTG'
+
+    with open(Outpath, 'a', newline='') as f:
+        wr = csv.writer(f, delimiter=',')
+        wr.writerow(header) 
+        
+    for i in range(len(ID)):
+        try:
+            with open(filenames[i], 'r') as file:
+                
+                df = pd.read_table(file, sep='\t', names=['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'NORMAL', 'TUMOR'])   
+                df1 = df.drop_duplicates(subset=['#CHROM', 'POS', 'ID', 'REF', 'ALT']) 
+                
+                #Makes DNA bases boolean, must select DNA mut first because lose after expand
+                df1['sA'] = df1.iloc[:,3].str.contains('A')
+                df1['sC'] = df1.iloc[:,3].str.contains('C')
+                df1['sG'] = df1.iloc[:,3].str.contains('G')
+                df1['sT'] = df1.iloc[:,3].str.contains('T')
+                df1['eA'] = df1.iloc[:,4].str.contains('A')
+                df1['eC'] = df1.iloc[:,4].str.contains('C')
+                df1['eG'] = df1.iloc[:,4].str.contains('G')
+                df1['eT'] = df1.iloc[:,4].str.contains('T')
+                
+                df1['AC'] = (df1['sA'] == True) & (df1['eC'] == True)
+                df1['AG'] = (df1['sA'] == True) & (df1['eG'] == True)
+                df1['AT'] = (df1['sA'] == True) & (df1['eT'] == True)
+                df1['CA'] = (df1['sC'] == True) & (df1['eA'] == True)
+                df1['CG'] = (df1['sC'] == True) & (df1['eG'] == True)
+                df1['CT'] = (df1['sC'] == True) & (df1['eT'] == True)
+                df1['GA'] = (df1['sG'] == True) & (df1['eA'] == True)
+                df1['GC'] = (df1['sG'] == True) & (df1['eC'] == True)
+                df1['GT'] = (df1['sG'] == True) & (df1['eT'] == True)
+                df1['TA'] = (df1['sT'] == True) & (df1['eA'] == True)
+                df1['TC'] = (df1['sT'] == True) & (df1['eC'] == True)
+                df1['TG'] = (df1['sT'] == True) & (df1['eG'] == True)
+                
+                #Creates different frames for comparable mutations
+                df1['ACTG'] = (df1['AC'] == True) | (df1['TG'] == True)
+                df1['AGTC'] = (df1['AG'] == True) | (df1['TC'] == True)
+                df1['ATTA'] = (df1['AT'] == True) | (df1['TA'] == True)
+                df1['CAGT'] = (df1['CA'] == True) | (df1['GT'] == True)
+                df1['CGGC'] = (df1['CG'] == True) | (df1['GC'] == True)
+                df1['CTGA'] = (df1['CT'] == True) | (df1['GA'] == True)               
+                
+                ACTG = (df1.loc[df1['ACTG'] == True])
+                AGTC = (df1.loc[df1['AGTC'] == True])
+                ATTA = (df1.loc[df1['ATTA'] == True])
+                CAGT = (df1.loc[df1['CAGT'] == True])
+                CGGC = (df1.loc[df1['CGGC'] == True])
+                CTGA = (df1.loc[df1['CTGA'] == True])
+                
+                AC = (df1.loc[df1['AC'] == True])
+                TG = (df1.loc[df1['TG'] == True])
+                
+                #Attributes correct AA to correct mutation for those with multiple possible
+                
+                ##CTGA - GR
+                if len(CTGA) == 0:
+                    GRGA = 0
+                else:    
+                    CTGA = CTGA.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                    CTGA['ST'] = CTGA.iloc[:,3].str.strip().str[0]
+                    CTGA['END'] = CTGA.iloc[:,3].str.strip().str[-1]
+                    GRGA = CTGA.loc[CTGA['ST'] == 'G']
+                    GRGA = GRGA.loc[GRGA['END'] == 'R']
+                    GRGA = len(GRGA)
+                
+                ##CAGT- NK, QH, SR, XR
+                if len(CAGT) == 0:
+                    NKCA = 0
+                    QHGT = 0
+                    SRCA = 0
+                    XRCA = 0
+                else:
+                    CAGT = CAGT.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                    CAGT['ST'] = CAGT.iloc[:,3].str.strip().str[0]
+                    CAGT['END'] = CAGT.iloc[:,3].str.strip().str[-1]
+                    
+                    CAGT['N'] = CAGT.iloc[:,5].str.contains('N')
+                    CAGT['Q'] = CAGT.iloc[:,5].str.contains('Q')
+                    CAGT['S'] = CAGT.iloc[:,5].str.contains('S')
+                    CAGT['X'] = CAGT.iloc[:,5].str.contains('X')
+                    CAGT['K'] = CAGT.iloc[:,6].str.contains('K')
+                    CAGT['H'] = CAGT.iloc[:,6].str.contains('H')
+                    CAGT['R'] = CAGT.iloc[:,6].str.contains('R')
+                    
+                    CAGT['NK'] = (CAGT['N'] == True) & (CAGT['K'] == True)
+                    CAGT['QH'] = (CAGT['Q'] == True) & (CAGT['H'] == True)
+                    CAGT['SR'] = (CAGT['S'] == True) & (CAGT['R'] == True)
+                    CAGT['XR'] = (CAGT['X'] == True) & (CAGT['R'] == True)
+                    
+                    NKCA = CAGT.loc[CAGT['NK'] == True]
+                    NKCA = len(NKCA)
+                    
+                    QHGT = CAGT.loc[CAGT['QH'] == True]
+                    QHGT = len(QHGT)
+                    
+                    SRCA = CAGT.loc[CAGT['SR'] == True]
+                    SRCA = len(SRCA)
+                    
+                    XRCA = CAGT.loc[CAGT['XR'] == True]
+                    XRCA = len(XRCA)
+                
+                
+                #ACTG - NK, QH
+                if len(ACTG) == 0:
+                    NKTG = 0
+                    QHAC = 0
+                else:
+                    ACTG = ACTG.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                    ACTG['ST'] = ACTG.iloc[:,3].str.strip().str[0]
+                    ACTG['END'] = ACTG.iloc[:,3].str.strip().str[-1]
+                    
+                    ACTG['N'] = ACTG.iloc[:,5].str.contains('N')
+                    ACTG['Q'] = ACTG.iloc[:,5].str.contains('Q')
+                    ACTG['K'] = ACTG.iloc[:,6].str.contains('K')
+                    ACTG['H'] = ACTG.iloc[:,6].str.contains('H') 
+                    
+                    ACTG['NK'] = (ACTG['N'] == True) & (ACTG['K'] == True)
+                    ACTG['QH'] = (ACTG['Q'] == True) & (ACTG['H'] == True)
+                    
+                    NKTG = ACTG.loc[ACTG['NK'] == True]
+                    NKTG = len(NKTG)
+                    
+                    QHAC = ACTG.loc[ACTG['QH'] == True]
+                    QHAC = len(QHAC)
+                
+                #AGTC - WR, XR
+                if len(AGTC) == 0:
+                    WRTC = 0
+                    XRTC = 0
+                else:
+                    AGTC = AGTC.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                    AGTC['ST'] = AGTC.iloc[:,3].str.strip().str[0]
+                    AGTC['END'] = AGTC.iloc[:,3].str.strip().str[-1]
+                    
+                    AGTC['W'] = AGTC.iloc[:,5].str.contains('W')
+                    AGTC['X'] = AGTC.iloc[:,5].str.contains('X')
+                    AGTC['R'] = AGTC.iloc[:,6].str.contains('R')
+                    
+                    AGTC['WR'] = (AGTC['W'] == True) & (AGTC['R'] == True)
+                    AGTC['XR'] = (AGTC['X'] == True) & (AGTC['R'] == True)
+                    
+                    WRTC = AGTC.loc[AGTC['WR'] == True]
+                    WRTC = len(WRTC)
+                    
+                    XRTC = AGTC.loc[AGTC['XR'] == True]
+                    XRTC = len(XRTC)       
+                
+                #ATTA - NK, QH, SR, WR
+                if len(ATTA) == 0:
+                    NKTA = 0
+                    QHAT = 0
+                    SRTA = 0
+                    WRAT = 0
+                else:
+                    ATTA = ATTA.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                    ATTA['ST'] = ATTA.iloc[:,3].str.strip().str[0]
+                    ATTA['END'] = ATTA.iloc[:,3].str.strip().str[-1]
+                    
+                    ATTA['N'] = ATTA.iloc[:,5].str.contains('N')
+                    ATTA['Q'] = ATTA.iloc[:,5].str.contains('Q')
+                    ATTA['S'] = ATTA.iloc[:,5].str.contains('S')
+                    ATTA['W'] = ATTA.iloc[:,5].str.contains('W')
+                    ATTA['K'] = ATTA.iloc[:,6].str.contains('K')
+                    ATTA['H'] = ATTA.iloc[:,6].str.contains('H') 
+                    ATTA['R'] = ATTA.iloc[:,6].str.contains('R')
+                    
+                    ATTA['NK'] = (ATTA['N'] == True) & (ATTA['K'] == True)
+                    ATTA['QH'] = (ATTA['Q'] == True) & (ATTA['H'] == True)
+                    ATTA['SR'] = (ATTA['S'] == True) & (ATTA['R'] == True)
+                    ATTA['WR'] = (ATTA['W'] == True) & (ATTA['R'] == True)
+                    
+                    NKTA = ATTA.loc[ATTA['NK'] == True]
+                    NKTA = len(NKTA)
+                    
+                    QHAT = ATTA.loc[ATTA['QH'] == True]
+                    QHAT = len(QHAT)
+                    
+                    SRTA = ATTA.loc[ATTA['SR'] == True]
+                    SRTA = len(SRTA)
+                    
+                    WRAT = ATTA.loc[ATTA['WR'] == True]
+                    WRAT = len(WRAT)
+                
+                #CGGC - NK, QH, SR
+                if len(CGGC) == 0:
+                    GRGC = 0
+                    NKCG = 0
+                    QHGC = 0
+                    SRCG = 0
+                else:
+                    CGGC = CGGC.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                    CGGC['ST'] = CGGC.iloc[:,3].str.strip().str[0]
+                    CGGC['END'] = CGGC.iloc[:,3].str.strip().str[-1]
+                    
+                    CGGC['G'] = CGGC.iloc[:,5].str.contains('N')
+                    CGGC['N'] = CGGC.iloc[:,5].str.contains('N')
+                    CGGC['Q'] = CGGC.iloc[:,5].str.contains('Q')
+                    CGGC['S'] = CGGC.iloc[:,5].str.contains('S')
+                    CGGC['K'] = CGGC.iloc[:,6].str.contains('K')
+                    CGGC['H'] = CGGC.iloc[:,6].str.contains('H')
+                    CGGC['R'] = CGGC.iloc[:,6].str.contains('R')
+                    
+                    CGGC['GR'] = (CGGC['G'] == True) & (CGGC['R'] == True)
+                    CGGC['NK'] = (CGGC['N'] == True) & (CGGC['K'] == True)
+                    CGGC['QH'] = (CGGC['Q'] == True) & (CGGC['H'] == True)
+                    CGGC['SR'] = (CGGC['S'] == True) & (CGGC['R'] == True)
+                    
+                    GRGC = CGGC.loc[CGGC['GR'] == True]
+                    GRGC = len(GRGC)
+                    
+                    NKCG = CGGC.loc[CGGC['NK'] == True]
+                    NKCG = len(NKCG)
+                    
+                    QHGC = CGGC.loc[CGGC['QH'] == True]
+                    QHGC = len(QHGC)
+                    
+                    SRCG = CGGC.loc[CGGC['SR'] == True]
+                    SRCG = len(SRCG)
+
+                #Other
+                if len(AC) == 0:
+                    SRAC = 0
+                else:
+                    SRAC = AC.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                    SRAC['ST'] = SRAC.iloc[:,3].str.strip().str[0]
+                    SRAC['END'] = SRAC.iloc[:,3].str.strip().str[-1]
+                    SRAC = SRAC.loc[SRAC['ST'] == 'S']
+                    SRAC = SRAC.loc[SRAC['END'] == 'R']
+                    SRAC = len(SRAC)
+                
+                if len(TG) == 0:
+                    SRTG = 0
+                else:
+                    SRTG = TG.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                    SRTG['ST'] = SRTG.iloc[:,3].str.strip().str[0]
+                    SRTG['END'] = SRTG.iloc[:,3].str.strip().str[-1]
+                    SRTG = SRTG.loc[SRTG['ST'] == 'S']
+                    SRTG = SRTG.loc[SRTG['END'] == 'R']
+                    SRTG = len(SRTG)
+                
+                
+                #For AA from only one DNA mutation
+                df3 = df1.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                df3['ST'] = df3.iloc[:,3].str.strip().str[0]
+                df3['END'] = df3.iloc[:,3].str.strip().str[-1]
+                
+                AD = (df3.loc[df3['ST'] == 'A'])
+                AD = (AD.loc[df3['END'] == 'D'])
+                AD = len(AD)
+                
+                AE = (df3.loc[df3['ST'] == 'A'])
+                AE = (AE.loc[df3['END'] == 'E'])
+                AE = len(AE)
+                
+                CR = (df3.loc[df3['ST'] == 'C'])
+                CR = (CR.loc[df3['END'] == 'R'])
+                CR = len(CR)
+                
+                DH = (df3.loc[df3['ST'] == 'D'])
+                DH = (DH.loc[df3['END'] == 'H'])
+                DH = len(DH)
+                
+                EK = (df3.loc[df3['ST'] == 'E'])
+                EK = (EK.loc[df3['END'] == 'K'])
+                EK = len(EK)
+                
+                GD = (df3.loc[df3['ST'] == 'G'])
+                GD = (GD.loc[df3['END'] == 'D'])
+                GD = len(GD)
+                
+                GE = (df3.loc[df3['ST'] == 'G'])
+                GE = (GE.loc[df3['END'] == 'E'])
+                GE = len(GE)
+                
+                HD = (df3.loc[df3['ST'] == 'H'])
+                HD = (HD.loc[df3['END'] == 'D'])
+                HD = len(HD)
+                
+                IK = (df3.loc[df3['ST'] == 'I'])
+                IK = (IK.loc[df3['END'] == 'K'])
+                IK = len(IK)
+                
+                IR = (df3.loc[df3['ST'] == 'I'])
+                IR = (IR.loc[df3['END'] == 'R'])
+                IR = len(IR)
+                
+                KE = (df3.loc[df3['ST'] == 'K'])
+                KE = (KE.loc[df3['END'] == 'E'])
+                KE = len(KE)
+                
+                LH = (df3.loc[df3['ST'] == 'L'])
+                LH = (LH.loc[df3['END'] == 'H'])
+                LH = len(LH)
+                
+                LR = (df3.loc[df3['ST'] == 'L'])
+                LR = (LR.loc[df3['END'] == 'R'])
+                LR = len(LR)
+                
+                MK = (df3.loc[df3['ST'] == 'M'])
+                MK = (MK.loc[df3['END'] == 'K'])
+                MK = len(MK)
+                
+                MR = (df3.loc[df3['ST'] == 'M'])
+                MR = (MR.loc[df3['END'] == 'R'])
+                MR = len(MR)
+                
+                ND = (df3.loc[df3['ST'] == 'N'])
+                ND = (ND.loc[df3['END'] == 'D'])
+                ND = len(ND)
+                
+                NH = (df3.loc[df3['ST'] == 'N'])
+                NH = (NH.loc[df3['END'] == 'H'])
+                NH = len(NH)
+                
+                PH = (df3.loc[df3['ST'] == 'P'])
+                PH = (PH.loc[df3['END'] == 'H'])
+                PH = len(PH)
+ 
+                PR = (df3.loc[df3['ST'] == 'P'])
+                PR = (PR.loc[df3['END'] == 'R'])
+                PR = len(PR)
+                
+                QE = (df3.loc[df3['ST'] == 'Q'])
+                QE = (QE.loc[df3['END'] == 'E'])
+                QE = len(QE)
+                
+                QK = (df3.loc[df3['ST'] == 'Q'])
+                QK = (QK.loc[df3['END'] == 'K'])
+                QK = len(QK)
+                
+                QR = (df3.loc[df3['ST'] == 'Q'])
+                QR = (QR.loc[df3['END'] == 'R'])
+                QR = len(QR)
+                
+                TK = (df3.loc[df3['ST'] == 'T'])
+                TK = (TK.loc[df3['END'] == 'K'])
+                TK = len(TK)
+
+                TR = (df3.loc[df3['ST'] == 'T'])
+                TR = (TR.loc[df3['END'] == 'R'])
+                TR = len(TR)
+                
+                VD = (df3.loc[df3['ST'] == 'V'])
+                VD = (VD.loc[df3['END'] == 'D'])
+                VD = len(VD)
+                                
+                VE = (df3.loc[df3['ST'] == 'V'])
+                VE = (VE.loc[df3['END'] == 'E'])
+                VE = len(VE)
+                
+                YD = (df3.loc[df3['ST'] == 'Y'])
+                YD = (YD.loc[df3['END'] == 'D'])
+                YD = len(YD)
+                
+                YH = (df3.loc[df3['ST'] == 'Y'])
+                YH = (YH.loc[df3['END'] == 'H'])
+                YH = len(YH)
+                
+                XE =  (df3.loc[df3['ST'] == '*'])
+                XE = (XE.loc[df3['END'] == 'E'])
+                XE = len(XE)
+                
+                XK =  (df3.loc[df3['ST'] == '*'])
+                XK = (XK.loc[df3['END'] == 'K'])
+                XK = len(XK)
+ 
+                
+                AC = NH + SRAC + QHAC
+                AG = KE + ND + QR
+                AT = XK + QHAT + WRAT
+                CA = AD + AE + PH + QK + TK + NKCA + SRCA + XRCA
+                CG = HD + PR + QE + TR + NKCG + SRCG
+                GA = EK + GD + GE + GRGA
+                GC = DH + GRGC + QHGC
+                GT = QHGT
+                TA = IK + LH + MK + VD + VE + NKTA + SRTA
+                TC = CR + YH
+                TG = IR + LR + MR + YD + XE + SRTG + NKTG
+                
+                DTI = GD + ND
+                DTV = AD + HD + VD + YD
+                ETI = GE + KE
+                ETV = AE + QE + VE + XE
+                HTI = YH
+                HTV = DH + LH + NH + PH + QHAC + QHGC + QHGT
+                KTI = EK
+                KTV = IK + MK + NKCA + NKCG + NKTA + NKTG + QK + TK + XK
+                RTI = CR + GRGA + QR + WRTC + XRTC
+                RTV = GRGC + IR + LR + MR + PR + SRAC + SRCA + SRCG + SRTA + SRTG + TR + WRAT + XRCA
+                D = DTI + DTV
+                E = ETI + ETV
+                H = HTI + HTV
+                K = KTI + KTV
+                R = RTI + RTV
+                
+                POS = H + K + R
+                NEG = D + E
+                NEGTI = DTI + ETI 
+                POSTI = HTI + KTI + RTI
+                NEGTV = DTV + ETV
+                POSTV = HTV + KTV + RTV
+                TOT = POS + NEG
+                
+                output = ID[i],TOT, POS, POSTI, POSTV, NEG, NEGTI, NEGTV, D, DTI, DTV, E, ETI, ETV, H, HTI, HTV, K, KTI, KTV, R, RTI, RTV, AC, AG, AT, CA, CG, GA, GC, GT, TA, TC, TG
+                with open(Outpath, 'a', newline='') as f:                   
+                    wr = csv.writer(f, delimiter=',')
+                    lines = output
+                    wr.writerow(lines)
+     
+        except FileNotFoundError:
+                next
+    
+    return
+
+
+def taa():
+    os.chdir(Folder)
+    df = pd.read_csv(Master)
+    ID = df.iloc[:,0]
+    filenames = ID + '/mutect-nsc.csv'
+    
+    for i in range(len(ID)):
+        try:
+            with open(filenames[i], 'r') as file:
+                df = pd.read_table(file, sep='\t', names=['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'NORMAL', 'TUMOR'])   
+                df1 = df.drop_duplicates(subset=['#CHROM', 'POS', 'ID', 'REF', 'ALT']) 
+                
+                df3 =df1.iloc[:,7].str.split(pat='|', n=4, expand=True)
+                df3['ST'] = df3.iloc[:,3].str.strip().str[0]
+                df3['END'] = df3.iloc[:,3].str.strip().str[-1]   
+                
+                AD = (df3.loc[df3['ST'] == 'A'])
+                AD = (AD.loc[df3['END'] == 'D'])
+                AD = len(AD)
+                
+                AE = (df3.loc[df3['ST'] == 'A'])
+                AE = (AE.loc[df3['END'] == 'E'])
+                AE = len(AE)
+                
+                AG = (df3.loc[df3['ST'] == 'A'])
+                AG = (AG.loc[df3['END'] == 'G'])
+                AG = len(AG)
+                
+                AP = (df3.loc[df3['ST'] == 'A'])
+                AP = (AP.loc[df3['END'] == 'P'])
+                AP = len(AP)
+                
+                AS = (df3.loc[df3['ST'] == 'A'])
+                AS = (AS.loc[df3['END'] == 'S'])
+                AS = len(AS)
+                
+                AT = (df3.loc[df3['ST'] == 'A'])
+                AT = (AT.loc[df3['END'] == 'T'])
+                AT = len(AT)
+                
+                AV = (df3.loc[df3['ST'] == 'A'])
+                AV = (AV.loc[df3['END'] == 'V'])
+                AV = len(AV)
+                
+                CF = (df3.loc[df3['ST'] == 'C'])
+                CF = (CF.loc[df3['END'] == 'F'])
+                CF = len(CF)
+                
+                CG = (df3.loc[df3['ST'] == 'C'])
+                CG = (CG.loc[df3['END'] == 'G'])
+                CG = len(CG)
+                
+                CR = (df3.loc[df3['ST'] == 'C'])
+                CR = (CR.loc[df3['END'] == 'R'])
+                CR = len(CR)
+                
+                CS = (df3.loc[df3['ST'] == 'C'])
+                CS = (CS.loc[df3['END'] == 'S'])
+                CS = len(CS)
+                
+                CW = (df3.loc[df3['ST'] == 'C'])
+                CW = (CW.loc[df3['END'] == 'W'])
+                CW = len(CW)
+                
+                CY = (df3.loc[df3['ST'] == 'C'])
+                CY = (CY.loc[df3['END'] == 'Y'])
+                CY = len(CY)
+                
+                DA = (df3.loc[df3['ST'] == 'D'])
+                DA = (DA.loc[df3['END'] == 'A'])
+                DA = len(DA)
+                
+                DE = (df3.loc[df3['ST'] == 'D'])
+                DE = (DE.loc[df3['END'] == 'E'])
+                DE = len(DE)
+                
+                DG = (df3.loc[df3['ST'] == 'D'])
+                DG = (DG.loc[df3['END'] == 'G'])
+                DG = len(DG)
+                
+                DH = (df3.loc[df3['ST'] == 'D'])
+                DH = (DH.loc[df3['END'] == 'H'])
+                DH = len(DH)
+                
+                DN = (df3.loc[df3['ST'] == 'D'])
+                DN = (DN.loc[df3['END'] == 'N'])
+                DN = len(DN)
+                
+                DV = (df3.loc[df3['ST'] == 'D'])
+                DV = (DV.loc[df3['END'] == 'V'])
+                DV = len(DV)
+                
+                DY = (df3.loc[df3['ST'] == 'D'])
+                DY = (DY.loc[df3['END'] == 'Y'])
+                DY = len(DY)
+                
+                EA = (df3.loc[df3['ST'] == 'E'])
+                EA = (EA.loc[df3['END'] == 'A'])
+                EA = len(EA)
+                
+                ED = (df3.loc[df3['ST'] == 'E'])
+                ED = (ED.loc[df3['END'] == 'D'])
+                ED = len(ED)
+                
+                EG = (df3.loc[df3['ST'] == 'E'])
+                EG = (EG.loc[df3['END'] == 'G'])
+                EG = len(EG)
+                
+                
+                EK = (df3.loc[df3['ST'] == 'E'])
+                EK = (EK.loc[df3['END'] == 'K'])
+                EK = len(EK)
+                
+                EQ = (df3.loc[df3['ST'] == 'E'])
+                EQ = (EQ.loc[df3['END'] == 'Q'])
+                EQ = len(EQ)
+                
+                EV = (df3.loc[df3['ST'] == 'E'])
+                EV = (EV.loc[df3['END'] == 'V'])
+                EV = len(EV)
+                
+                FC = (df3.loc[df3['ST'] == 'F'])
+                FC = (FC.loc[df3['END'] == 'C'])
+                FC = len(FC)
+                
+                FI = (df3.loc[df3['ST'] == 'F'])
+                FI = (FI.loc[df3['END'] == 'I'])
+                FI = len(FI)
+                
+                FL = (df3.loc[df3['ST'] == 'F'])
+                FL = (FL.loc[df3['END'] == 'L'])
+                FL = len(FL)
+                
+                FS = (df3.loc[df3['ST'] == 'F'])
+                FS = (FS.loc[df3['END'] == 'S'])
+                FS = len(FS)
+                
+                FV = (df3.loc[df3['ST'] == 'F'])
+                FV = (FV.loc[df3['END'] == 'V'])
+                FV = len(FV)
+                
+                FY = (df3.loc[df3['ST'] == 'F'])
+                FY = (FY.loc[df3['END'] == 'Y'])
+                FY = len(FY)
+                
+                GA = (df3.loc[df3['ST'] == 'G'])
+                GA = (GA.loc[df3['END'] == 'A'])
+                GA = len(GA)
+                
+                GC = (df3.loc[df3['ST'] == 'G'])
+                GC = (GC.loc[df3['END'] == 'C'])
+                GC = len(GC)
+                
+                GD = (df3.loc[df3['ST'] == 'G'])
+                GD = (GD.loc[df3['END'] == 'D'])
+                GD = len(GD)
+                
+                GE = (df3.loc[df3['ST'] == 'G'])
+                GE = (GE.loc[df3['END'] == 'E'])
+                GE = len(GE)
+                
+                GR = (df3.loc[df3['ST'] == 'G'])
+                GR = (GR.loc[df3['END'] == 'R'])
+                GR = len(GR)
+                
+                GS = (df3.loc[df3['ST'] == 'G'])
+                GS = (GS.loc[df3['END'] == 'S'])
+                GS = len(GS)
+                
+                GV = (df3.loc[df3['ST'] == 'G'])
+                GV = (GV.loc[df3['END'] == 'V'])
+                GV = len(GV)
+                
+                GW = (df3.loc[df3['ST'] == 'G'])
+                GW = (GW.loc[df3['END'] == 'W'])
+                GW = len(GW)
+                
+                HD = (df3.loc[df3['ST'] == 'H'])
+                HD = (HD.loc[df3['END'] == 'D'])
+                HD = len(HD)
+                
+                HL = (df3.loc[df3['ST'] == 'H'])
+                HL = (HL.loc[df3['END'] == 'L'])
+                HL = len(HL)
+                
+                HN = (df3.loc[df3['ST'] == 'H'])
+                HN = (HN.loc[df3['END'] == 'N'])
+                HN = len(HN)
+                
+                HP = (df3.loc[df3['ST'] == 'H'])
+                HP = (HP.loc[df3['END'] == 'P'])
+                HP = len(HP)
+                
+                HQ = (df3.loc[df3['ST'] == 'H'])
+                HQ = (HQ.loc[df3['END'] == 'Q'])
+                HQ = len(HQ)
+                
+                HR = (df3.loc[df3['ST'] == 'H'])
+                HR = (HR.loc[df3['END'] == 'R'])
+                HR = len(HR)
+                
+                HY = (df3.loc[df3['ST'] == 'H'])
+                HY = (HY.loc[df3['END'] == 'Y'])
+                HY = len(HY)
+                
+                IF = (df3.loc[df3['ST'] == 'I'])
+                IF = (IF.loc[df3['END'] == 'F'])
+                IF = len(IF)
+                
+                IK = (df3.loc[df3['ST'] == 'I'])
+                IK = (IK.loc[df3['END'] == 'K'])
+                IK = len(IK)
+                
+                IL = (df3.loc[df3['ST'] == 'I'])
+                IL = (IL.loc[df3['END'] == 'L'])
+                IL = len(IL)
+                
+                IM = (df3.loc[df3['ST'] == 'I'])
+                IM = (IM.loc[df3['END'] == 'M'])
+                IM = len(IM)
+                
+                IN = (df3.loc[df3['ST'] == 'I'])
+                IN = (IN.loc[df3['END'] == 'N'])
+                IN = len(IN)
+                
+                IR = (df3.loc[df3['ST'] == 'I'])
+                IR = (IR.loc[df3['END'] == 'R'])
+                IR = len(IR)
+                
+                IS = (df3.loc[df3['ST'] == 'I'])
+                IS = (IS.loc[df3['END'] == 'S'])
+                IS = len(IS)
+                
+                IT = (df3.loc[df3['ST'] == 'I'])
+                IT = (IT.loc[df3['END'] == 'T'])
+                IT = len(IT)
+                
+                IV = (df3.loc[df3['ST'] == 'I'])
+                IV = (IV.loc[df3['END'] == 'V'])
+                IV = len(IV)
+                
+                IW = (df3.loc[df3['ST'] == 'I'])
+                IW = (IW.loc[df3['END'] == 'W'])
+                IW = len(IW)
+                
+                KE = (df3.loc[df3['ST'] == 'K'])
+                KE = (KE.loc[df3['END'] == 'E'])
+                KE = len(KE)
+                
+                KI = (df3.loc[df3['ST'] == 'K'])
+                KI = (KI.loc[df3['END'] == 'I'])
+                KI = len(KI)
+                
+                KM = (df3.loc[df3['ST'] == 'K'])
+                KM = (KM.loc[df3['END'] == 'M'])
+                KM = len(KM)
+                
+                KN = (df3.loc[df3['ST'] == 'K'])
+                KN = (KN.loc[df3['END'] == 'N'])
+                KN = len(KN)
+                
+                KQ = (df3.loc[df3['ST'] == 'K'])
+                KQ = (KQ.loc[df3['END'] == 'Q'])
+                KQ = len(KQ)
+                
+                KR = (df3.loc[df3['ST'] == 'K'])
+                KR = (KR.loc[df3['END'] == 'R'])
+                KR = len(KR)
+                
+                KT = (df3.loc[df3['ST'] == 'K'])
+                KT = (KT.loc[df3['END'] == 'T'])
+                KT = len(KT)
+                
+                LF = (df3.loc[df3['ST'] == 'L'])
+                LF = (LF.loc[df3['END'] == 'F'])
+                LF = len(LF)
+                
+                LH = (df3.loc[df3['ST'] == 'L'])
+                LH = (LH.loc[df3['END'] == 'H'])
+                LH = len(LH)
+                
+                LI = (df3.loc[df3['ST'] == 'L'])
+                LI = (LI.loc[df3['END'] == 'I'])
+                LI = len(LI)
+                
+                LM = (df3.loc[df3['ST'] == 'L'])
+                LM = (LM.loc[df3['END'] == 'M'])
+                LM = len(LM)
+                
+                LP = (df3.loc[df3['ST'] == 'L'])
+                LP = (LP.loc[df3['END'] == 'P'])
+                LP = len(LP)
+                
+                LQ = (df3.loc[df3['ST'] == 'L'])
+                LQ = (LQ.loc[df3['END'] == 'Q'])
+                LQ = len(LQ)
+                
+                LR = (df3.loc[df3['ST'] == 'L'])
+                LR = (LR.loc[df3['END'] == 'R'])
+                LR = len(LR)
+                
+                LS = (df3.loc[df3['ST'] == 'L'])
+                LS = (LS.loc[df3['END'] == 'S'])
+                LS = len(LS)
+                
+                LV = (df3.loc[df3['ST'] == 'L'])
+                LV = (LV.loc[df3['END'] == 'V'])
+                LV = len(LV)
+                
+                LW = (df3.loc[df3['ST'] == 'L'])
+                LW = (LW.loc[df3['END'] == 'W'])
+                LW = len(LW)
+                
+                MI = (df3.loc[df3['ST'] == 'M'])
+                MI = (MI.loc[df3['END'] == 'I'])
+                MI = len(MI)
+                
+                MK = (df3.loc[df3['ST'] == 'M'])
+                MK = (MK.loc[df3['END'] == 'K'])
+                MK = len(MK)
+                
+                ML = (df3.loc[df3['ST'] == 'M'])
+                ML = (ML.loc[df3['END'] == 'L'])
+                ML = len(ML)
+                
+                MR = (df3.loc[df3['ST'] == 'M'])
+                MR = (MR.loc[df3['END'] == 'R'])
+                MR = len(MR)
+                
+                MT = (df3.loc[df3['ST'] == 'M'])
+                MT = (MT.loc[df3['END'] == 'T'])
+                MT = len(MT)
+                
+                MV = (df3.loc[df3['ST'] == 'M'])
+                MV = (MV.loc[df3['END'] == 'V'])
+                MV = len(MV)
+                
+                ND = (df3.loc[df3['ST'] == 'N'])
+                ND = (ND.loc[df3['END'] == 'D'])
+                ND = len(ND)
+                
+                NH = (df3.loc[df3['ST'] == 'N'])
+                NH = (NH.loc[df3['END'] == 'H'])
+                NH = len(NH)
+                
+                NI = (df3.loc[df3['ST'] == 'N'])
+                NI = (NI.loc[df3['END'] == 'I'])
+                NI = len(NI)
+                
+                NK = (df3.loc[df3['ST'] == 'N'])
+                NK = (NK.loc[df3['END'] == 'K'])
+                NK = len(NK)
+                
+                NS = (df3.loc[df3['ST'] == 'N'])
+                NS = (NS.loc[df3['END'] == 'S'])
+                NS = len(NS)
+                
+                NT = (df3.loc[df3['ST'] == 'N'])
+                NT = (NT.loc[df3['END'] == 'T'])
+                NT = len(NT)
+                
+                NY = (df3.loc[df3['ST'] == 'N'])
+                NY = (NY.loc[df3['END'] == 'Y'])
+                NY = len(NY)
+                
+                PA = (df3.loc[df3['ST'] == 'P'])
+                PA = (PA.loc[df3['END'] == 'A'])
+                PA = len(PA)
+                
+                PH = (df3.loc[df3['ST'] == 'P'])
+                PH = (PH.loc[df3['END'] == 'H'])
+                PH = len(PH)
+                
+                PL = (df3.loc[df3['ST'] == 'P'])
+                PL = (PL.loc[df3['END'] == 'L'])
+                PL = len(PL)
+                
+                PQ = (df3.loc[df3['ST'] == 'P'])
+                PQ = (PQ.loc[df3['END'] == 'Q'])
+                PQ = len(PQ)
+                
+                PR = (df3.loc[df3['ST'] == 'P'])
+                PR = (PR.loc[df3['END'] == 'R'])
+                PR = len(PR)
+                
+                PS = (df3.loc[df3['ST'] == 'P'])
+                PS = (PS.loc[df3['END'] == 'S'])
+                PS = len(PS)
+                
+                PT = (df3.loc[df3['ST'] == 'P'])
+                PT = (PT.loc[df3['END'] == 'T'])
+                PT = len(PT)
+                
+                QE = (df3.loc[df3['ST'] == 'Q'])
+                QE = (QE.loc[df3['END'] == 'E'])
+                QE = len(QE)
+                
+                QH = (df3.loc[df3['ST'] == 'Q'])
+                QH = (QH.loc[df3['END'] == 'H'])
+                QH = len(QH)
+                
+                QK = (df3.loc[df3['ST'] == 'Q'])
+                QK = (QK.loc[df3['END'] == 'K'])
+                QK = len(QK)
+                
+                QL = (df3.loc[df3['ST'] == 'Q'])
+                QL = (QL.loc[df3['END'] == 'L'])
+                QL = len(QL)
+                
+                QP = (df3.loc[df3['ST'] == 'Q'])
+                QP = (QP.loc[df3['END'] == 'P'])
+                QP = len(QP)
+                
+                QR = (df3.loc[df3['ST'] == 'Q'])
+                QR = (QR.loc[df3['END'] == 'R'])
+                QR = len(QR)
+                
+                RC = (df3.loc[df3['ST'] == 'R'])
+                RC = (RC.loc[df3['END'] == 'C'])
+                RC = len(RC)
+                
+                RG = (df3.loc[df3['ST'] == 'R'])
+                RG = (RG.loc[df3['END'] == 'G'])
+                RG = len(RG)
+                
+                RH = (df3.loc[df3['ST'] == 'R'])
+                RH = (RH.loc[df3['END'] == 'H'])
+                RH = len(RH)
+                
+                RI = (df3.loc[df3['ST'] == 'R'])
+                RI = (RI.loc[df3['END'] == 'I'])
+                RI = len(RI)
+                
+                RK = (df3.loc[df3['ST'] == 'R'])
+                RK = (RK.loc[df3['END'] == 'K'])
+                RK = len(RK)
+                
+                RL = (df3.loc[df3['ST'] == 'R'])
+                RL = (RL.loc[df3['END'] == 'L'])
+                RL = len(RL)
+                
+                RM = (df3.loc[df3['ST'] == 'R'])
+                RM = (RM.loc[df3['END'] == 'M'])
+                RM = len(RM)
+                
+                RP = (df3.loc[df3['ST'] == 'R'])
+                RP = (RP.loc[df3['END'] == 'P'])
+                RP = len(RP)
+                
+                RQ = (df3.loc[df3['ST'] == 'R'])
+                RQ = (RQ.loc[df3['END'] == 'Q'])
+                RQ = len(RQ)
+                
+                RS = (df3.loc[df3['ST'] == 'R'])
+                RS = (RS.loc[df3['END'] == 'S'])
+                RS = len(RS)
+                
+                RT = (df3.loc[df3['ST'] == 'R'])
+                RT = (RT.loc[df3['END'] == 'T'])
+                RT = len(RT)
+                
+                RW = (df3.loc[df3['ST'] == 'R'])
+                RW = (RW.loc[df3['END'] == 'W'])
+                RW = len(RW)
+                
+                SA = (df3.loc[df3['ST'] == 'S'])
+                SA = (SA.loc[df3['END'] == 'A'])
+                SA = len(SA)
+                
+                SC = (df3.loc[df3['ST'] == 'S'])
+                SC = (SC.loc[df3['END'] == 'C'])
+                SC = len(SC)
+                
+                SF = (df3.loc[df3['ST'] == 'S'])
+                SF = (SF.loc[df3['END'] == 'F'])
+                SF = len(SF)
+                
+                SG = (df3.loc[df3['ST'] == 'S'])
+                SG = (SG.loc[df3['END'] == 'G'])
+                SG = len(SG)
+                
+                SI = (df3.loc[df3['ST'] == 'S'])
+                SI = (SI.loc[df3['END'] == 'I'])
+                SI = len(SI)
+                
+                SL = (df3.loc[df3['ST'] == 'S'])
+                SL = (SL.loc[df3['END'] == 'L'])
+                SL = len(SL)
+                
+                SN = (df3.loc[df3['ST'] == 'S'])
+                SN = (SN.loc[df3['END'] == 'N'])
+                SN = len(SN)
+                
+                SP = (df3.loc[df3['ST'] == 'S'])
+                SP = (SP.loc[df3['END'] == 'P'])
+                SP = len(SP)
+                
+                SR = (df3.loc[df3['ST'] == 'S'])
+                SR = (SR.loc[df3['END'] == 'R'])
+                SR = len(SR)
+                
+                ST = (df3.loc[df3['ST'] == 'S'])
+                ST = (ST.loc[df3['END'] == 'T'])
+                ST = len(ST)
+                
+                SW = (df3.loc[df3['ST'] == 'S'])
+                SW = (SW.loc[df3['END'] == 'W'])
+                SW = len(SW)
+                
+                SY = (df3.loc[df3['ST'] == 'S'])
+                SY = (SY.loc[df3['END'] == 'Y'])
+                SY = len(SY)
+                
+                TA = (df3.loc[df3['ST'] == 'T'])
+                TA = (TA.loc[df3['END'] == 'A'])
+                TA = len(TA)
+                
+                TI = (df3.loc[df3['ST'] == 'T'])
+                TI = (TI.loc[df3['END'] == 'I'])
+                TI = len(TI)
+                
+                TK = (df3.loc[df3['ST'] == 'T'])
+                TK = (TK.loc[df3['END'] == 'K'])
+                TK = len(TK)
+                
+                TM = (df3.loc[df3['ST'] == 'T'])
+                TM = (TM.loc[df3['END'] == 'M'])
+                TM = len(TM)
+                
+                TN = (df3.loc[df3['ST'] == 'T'])
+                TN = (TN.loc[df3['END'] == 'N'])
+                TN = len(TN)
+                
+                TP = (df3.loc[df3['ST'] == 'T'])
+                TP = (TP.loc[df3['END'] == 'P'])
+                TP = len(TP)
+                
+                TR = (df3.loc[df3['ST'] == 'T'])
+                TR = (TR.loc[df3['END'] == 'R'])
+                TR = len(TR)
+                
+                VA = (df3.loc[df3['ST'] == 'V'])
+                VA = (VA.loc[df3['END'] == 'A'])
+                VA = len(VA)
+                
+                VD = (df3.loc[df3['ST'] == 'V'])
+                VD = (VD.loc[df3['END'] == 'D'])
+                VD = len(VD)
+                                
+                VE = (df3.loc[df3['ST'] == 'V'])
+                VE = (VE.loc[df3['END'] == 'E'])
+                VE = len(VE)
+                
+                VF = (df3.loc[df3['ST'] == 'V'])
+                VF = (VF.loc[df3['END'] == 'F'])
+                VF = len(VF)
+                
+                VG = (df3.loc[df3['ST'] == 'V'])
+                VG = (VG.loc[df3['END'] == 'G'])
+                VG = len(VG)
+                
+                VI = (df3.loc[df3['ST'] == 'V'])
+                VI = (VI.loc[df3['END'] == 'I'])
+                VI = len(VI)
+                
+                VL = (df3.loc[df3['ST'] == 'V'])
+                VL = (VL.loc[df3['END'] == 'L'])
+                VL = len(VL)
+                
+                VM = (df3.loc[df3['ST'] == 'V'])
+                VM = (VM.loc[df3['END'] == 'M'])
+                VM = len(VM)
+                
+                WC = (df3.loc[df3['ST'] == 'W'])
+                WC = (WC.loc[df3['END'] == 'C'])
+                WC = len(WC)
+                
+                WG = (df3.loc[df3['ST'] == 'W'])
+                WG = (WG.loc[df3['END'] == 'G'])
+                WG = len(WG)
+                
+                WL = (df3.loc[df3['ST'] == 'W'])
+                WL = (WL.loc[df3['END'] == 'L'])
+                WL = len(WL)
+                
+                WR = (df3.loc[df3['ST'] == 'W'])
+                WR = (WR.loc[df3['END'] == 'R'])
+                WR = len(WR)
+                
+                WS = (df3.loc[df3['ST'] == 'W'])
+                WS = (WS.loc[df3['END'] == 'S'])
+                WS = len(WS)
+                
+                YC = (df3.loc[df3['ST'] == 'Y'])
+                YC = (YC.loc[df3['END'] == 'C'])
+                YC = len(YC)
+                
+                YD = (df3.loc[df3['ST'] == 'Y'])
+                YD = (YD.loc[df3['END'] == 'D'])
+                YD = len(YD)
+                
+                YF = (df3.loc[df3['ST'] == 'Y'])
+                YF = (YF.loc[df3['END'] == 'F'])
+                YF = len(YF)
+                
+                YH = (df3.loc[df3['ST'] == 'Y'])
+                YH = (YH.loc[df3['END'] == 'H'])
+                YH = len(YH)
+                
+                YN = (df3.loc[df3['ST'] == 'Y'])
+                YN = (YN.loc[df3['END'] == 'N'])
+                YN = len(YN)
+                
+                YS = (df3.loc[df3['ST'] == 'Y'])
+                YS = (YS.loc[df3['END'] == 'S'])
+                YS = len(YS)
+                
+                CX = (df3.loc[df3['ST'] == 'C'])
+                CX = (CX.loc[df3['END'] == '*'])
+                CX = len(CX)
+                
+                EX = (df3.loc[df3['ST'] == 'E'])
+                EX = (EX.loc[df3['END'] == '*'])
+                EX = len(EX)
+                
+                GX = (df3.loc[df3['ST'] == 'G'])
+                GX = (GX.loc[df3['END'] == '*'])
+                GX = len(GX)
+                
+                KX = (df3.loc[df3['ST'] == 'K'])
+                KX = (KX.loc[df3['END'] == '*'])
+                KX = len(KX)
+                
+                LX = (df3.loc[df3['ST'] == 'L'])
+                LX = (LX.loc[df3['END'] == '*'])
+                LX = len(LX)
+                
+                QX = (df3.loc[df3['ST'] == 'Q'])
+                QX = (QX.loc[df3['END'] == '*'])
+                QX = len(QX)
+                
+                RX = (df3.loc[df3['ST'] == 'R'])
+                RX = (RX.loc[df3['END'] == '*'])
+                RX = len(RX)
+                
+                SX = (df3.loc[df3['ST'] == 'S'])
+                SX = (SX.loc[df3['END'] == '*'])
+                SX = len(SX)
+                
+                WX = (df3.loc[df3['ST'] == 'W'])
+                WX = (WX.loc[df3['END'] == '*'])
+                WX = len(WX)
+                
+                YX = (df3.loc[df3['ST'] == 'Y'])
+                YX = (YX.loc[df3['END'] == '*'])
+                YX = len(YX)
+                
+                XC =  (df3.loc[df3['ST'] == '*'])
+                XC = (XC.loc[df3['END'] == 'C'])
+                XC = len(XC)
+                
+                XE =  (df3.loc[df3['ST'] == '*'])
+                XE = (XE.loc[df3['END'] == 'E'])
+                XE = len(XE)
+                
+                XG =  (df3.loc[df3['ST'] == '*'])
+                XG = (XG.loc[df3['END'] == 'G'])
+                XG = len(XG)
+                
+                XK =  (df3.loc[df3['ST'] == '*'])
+                XK = (XK.loc[df3['END'] == 'K'])
+                XK = len(XK)
+                
+                XL =  (df3.loc[df3['ST'] == '*'])
+                XL = (XL.loc[df3['END'] == 'L'])
+                XL = len(XL)
+                
+                XQ =  (df3.loc[df3['ST'] == '*'])
+                XQ = (XQ.loc[df3['END'] == 'Q'])
+                XQ = len(XQ)
+                
+                XR =  (df3.loc[df3['ST'] == '*'])
+                XR = (XR.loc[df3['END'] == 'R'])
+                XR = len(XR)
+                
+                XS =  (df3.loc[df3['ST'] == '*'])
+                XS = (XS.loc[df3['END'] == 'S'])
+                XS = len(XS)
+                
+                XW =  (df3.loc[df3['ST'] == '*'])
+                XW = (XW.loc[df3['END'] == 'W'])
+                XW = len(XW)
+                
+                XY =  (df3.loc[df3['ST'] == '*'])
+                XY = (XY.loc[df3['END'] == 'Y'])
+                XY = len(XY)
+                
+
+		#CREATES INDIVIDUAL PROFILES FOR ALL SAMPLES
+                Outpath1 = Out + '/' + ID[i] + '-aa-profile.csv'
+    
+                header = '0','A','C','D','E','F','G', 'H', 'I', 'K', 'L', 'M','N','P','Q','R','S','T','V','W','Y', 'STOP'
+    
+                with open(Outpath1, 'w', newline='') as f:
+                    wr = csv.writer(f, delimiter=',')
+                    wr.writerow(header)
+                
+                output = (['A',0,0,AD,AE,0,AG,0,0,0,0,0,0,AP,0,0,AS,AT,AV,0,0,0],
+                ['C',0,0,0,0,CF,CG,0,0,0,0,0,0,0,0,CR,CS,0,0,CW,CY,CX],
+                ['D',DA,0,0,DE,0,DG,DH,0,0,0,0,DN,0,0,0,0,0,DV,0,DY,0],
+                ['E',EA,0,ED,0,0,EG,0,0,EK,0,0,0,0,EQ,0,0,0,EV,0,0,EX],
+                ['F',0,FC,0,0,0,0,0,FI,0,FL,0,0,0,0,0,FS,0,FV,0,FY,0],
+                ['G',GA,GC,GD,GE,0,0,0,0,0,0,0,0,0,0,GR,GS,0,GV,GW,0,GX],
+                ['H',0,0,HD,0,0,0,0,0,0,HL,0,HN,HP,HQ,HR,0,0,0,0,HY,0],
+                ['I',0,0,0,0,IF,0,0,0,IK,IL,IM,IN,0,0,IR,IS,IT,IV,IW,0,0],
+                ['K',0,0,0,KE,0,0,0,KI,0,0,KM,KN,0,KQ,KR,0,KT,0,0,0,KX],
+                ['L',0,0,0,0,LF,0,LH,LI,0,0,LM,0,LP,LQ,LR,LS,0,LV,LW,0,LX],
+                ['M',0,0,0,0,0,0,0,MI,MK,ML,0,0,0,0,MR,0,MT,MV,0,0,0],
+                ['N',0,0,ND,0,0,0,NH,NI,NK,0,0,0,0,0,0,NS,NT,0,0,NY,0],
+                ['P',PA,0,0,0,0,0,PH,0,0,PL,0,0,0,PQ,PR,PS,PT,0,0,0,0],
+                ['Q',0,0,0,QE,0,0,QH,0,QK,QL,0,0,QP,0,QR,0,0,0,0,0, QX],
+                ['R',0,RC,0,0,0,RG,RH,RI,RK,RL,RM,0,RP,RQ,0,RS,RT,0,RW,0,RX],
+                ['S',SA,SC,0,0,SF,SG,0,SI,0,SL,0,SN,SP,0,SR,0,ST,0,SW,SY,SX],
+                ['T',TA,0,0,0,0,0,0,TI,TK,0,TM,TN,TP,0,TR,0,0,0,0,0,0],
+                ['V',VA,0,VD,VE,VF,VG,0,VI,0,VL,VM,0,0,0,0,0,0,0,0,0,0],
+                ['W',0,WC,0,0,0,WG,0,0,0,WL,0,0,0,0,WR,WS,0,0,0,0,WX],
+                ['Y',0,YC,YD,0,YF,0,YH,0,0,0,0,YN,0,0,0,YS,0,0,0,0,YX],
+                ['STOP',0,XC,0,XE,0,XG,0,0,XK,XL,0,0,0,XQ,XR,XS,0,0,XW,XY,0])
+                
+                with open(Outpath1, 'a', newline='') as f:
+                    wr = csv.writer(f, delimiter=',')
+                    lines = output
+                    wr.writerow(lines)
+
+                #CREATES SUMMARY OF ALL SAMPLES
+
+                SUM = AD,AE,AG,AP,AS,AT,AV,CF,CG,CR,CS,CW,CY,CX,DA,DE,DG,DH,DN,DV,DY,EA,ED,EG,EK,EQ,EV,EX,FC,FI,FL,FS,FV,FY,GA,GC,GD,GE,GR,GS,GV,GW,GX,HD,HL,HN,HP,HQ,HR,HY,IF,IK,IL,IM,IN,IR,IS,IT,IV,IW,KE,KI,KM,KN,KQ,KR,KT,KX,LF,LH,LI,LM,LP,LQ,LR,LS,LV,LW,LX,MI,MK,ML,MR,MT,MV,ND,NH,NI,NK,NS,NT,NY,PA,PH,PL,PQ,PR,PS,PT,QE,QH,QK,QL,QP,QR,QX,RC,RG,RH,RI,RK,RL,RM,RP,RQ,RS,RT,RW,RX,SA,SC,SF,SG,SI,SL,SN,SP,SR,ST,SW,SY,SX,TA,TI,TK,TM,TN,TP,TR,VA,VD,VE,VF,VG,VI,VL,VM,WC,WG,WL,WR,WS,WX,YC,YD,YF,YH,YN,YS,YX,XC,XE,XG,XK,XL,XQ,XR,XS,XW,XY
+                
+                
+                Outpath2 = Out + '/tot-mut-aa.csv'
+                
+                
+                with open(Outpath2, 'a', newline='') as f:
+                    wr = csv.writer(f, delimiter=',')
+                    lines = SUM
+                    wr.writerow(lines)
+            
+        except FileNotFoundError:
+                next
+    return
